@@ -1,0 +1,12 @@
+import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
+const envContent = fs.readFileSync('.env', 'utf8');
+const urlMatch = envContent.match(/VITE_SUPABASE_URL="([^"]+)"/);
+const keyMatch = envContent.match(/VITE_SUPABASE_ANON_KEY="([^"]+)"/);
+const supabase = createClient(urlMatch[1], keyMatch[1]);
+async function test() {
+  const { data, error } = await supabase.rpc('check_company_access', { v_company_id: 'comp-X' });
+  console.log("Error:", error);
+  console.log("Data:", data);
+}
+test();

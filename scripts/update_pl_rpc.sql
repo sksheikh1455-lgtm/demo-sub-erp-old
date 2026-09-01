@@ -1,0 +1,98 @@
+CREATE OR REPLACE FUNCTION get_partner_ledger(
+    p_company_id TEXT,
+    p_contact_id TEXT DEFAULT NULL,
+    p_start_date TIMESTAMP DEFAULT NULL,
+    p_end_date TIMESTAMP DEFAULT NULL,
+    p_offset INT DEFAULT 0,
+    p_limit INT DEFAULT 50,
+    p_type TEXT DEFAULT 'ALL',
+    p_search TEXT DEFAULT NULL,
+    p_contact_type TEXT DEFAULT 'ALL'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_opening_balance NUMERIC := 0;
+    v_transactions JSONB;
+    v_total_count INT := 0;
+BEGIN
+    IF p_contact_id IS NOT NULL THEN
+        SELECT COALESCE((data->'openingBalances'->>p_company_id)::NUMERIC, 0)
+        INTO v_opening_balance
+        FROM docs_contacts WHERE id = p_contact_id;
+    END IF;
+
+    v_opening_balance := v_opening_balance + COALESCE((
+        SELECT SUM(l.debit - l.credit)
+        FROM docs_journal_lines l
+        JOIN docs_journals j ON j.id = l.journal_id
+        WHERE j.company_id = p_company_id
+          AND j.status = 'POSTED'
+          AND (p_contact_id IS NULL OR l.contact_id = p_contact_id)
+          AND (p_start_date IS NULL OR j.date < p_start_date)
+    ), 0);
+    
+    WITH filtered_txs AS (
+        SELECT 
+            j.id as journal_id,
+            j.date as tx_date,
+            j.reference_number as reference,
+            j.journal_type as type,
+            COALESCE(j.prepared_by, j.data->>'preparedBy', 'System') as prepared_by,
+            l.debit,
+            l.credit,
+            l.description,
+            l.id as line_id,
+            a.name as account_name,
+            c.name as contact_name
+        FROM docs_journal_lines l
+        JOIN docs_journals j ON j.id = l.journal_id
+        LEFT JOIN docs_accounts a ON a.id = l.account_id
+        LEFT JOIN docs_contacts c ON c.id = l.contact_id
+        WHERE j.company_id = p_company_id
+          AND j.status = 'POSTED'
+          AND (p_contact_id IS NULL OR l.contact_id = p_contact_id)
+          AND (p_start_date IS NULL OR j.date >= p_start_date)
+          AND (p_end_date IS NULL OR j.date <= p_end_date)
+          AND (p_type IS NULL OR p_type = 'ALL' OR j.journal_type = p_type)
+          AND (
+             p_search IS NULL OR p_search = '' 
+             OR j.reference_number ILIKE '%' || p_search || '%'
+             OR a.name ILIKE '%' || p_search || '%'
+             OR l.description ILIKE '%' || p_search || '%'
+          )
+          AND (p_contact_type IS NULL OR p_contact_type = 'ALL' OR c.data->>'type' = p_contact_type)
+    )
+    SELECT 
+        (SELECT COUNT(*) FROM filtered_txs),
+        COALESCE(jsonb_agg(
+            jsonb_build_object(
+                'id', line_id,
+                'journalId', journal_id,
+                'date', tx_date,
+                'reference', reference,
+                'type', type,
+                'debit', debit,
+                'credit', credit,
+                'description', description,
+                'accountName', account_name,
+                'contactName', contact_name,
+                'preparedBy', prepared_by
+            )
+        ), '[]'::jsonb)
+    INTO v_total_count, v_transactions
+    FROM (
+        SELECT * FROM filtered_txs
+        ORDER BY tx_date ASC, journal_id ASC
+        LIMIT p_limit OFFSET p_offset
+    ) sub;
+
+    RETURN jsonb_build_object(
+        'openingBalance', v_opening_balance,
+        'transactions', v_transactions,
+        'totalCount', v_total_count
+    );
+END;
+$$;

@@ -1,0 +1,196 @@
+
+  const filteredInvoices = store.paginatedInvoices;
+  const sortedInvoices = store.paginatedInvoices;
+  const paginatedInvoices = store.paginatedInvoices;
+  const totalPages = Math.ceil(store.invoiceCount / pageSize);
+
+  const handleLineProductSelect = useCallback((productId: string, identifier?: string | number) => {
+    if (identifier === undefined) return;
+    const idx = identifier as number;
+    setFormData(prev => {
+      const p = (store.products || []).find((x:any)=>x.id===productId);
+      const lastRate = (() => {
+        if (!productId || !prev.customerId) return null;
+        const history = (store.invoices || [])
+          .filter((b: any) => b.customerId === prev.customerId && b.status !== 'DRAFT')
+          .sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')));
+        for (const b of history) {
+          const item = (b.items || []).find((it: any) => it.productId === productId);
+          if (item) return item.unitPrice;
+        }
+        return null;
+      })();
+      
+      const ni = [...prev.items];
+      ni[idx] = { 
+        ...ni[idx], 
+        productId: productId, 
+        description: p?.name || '', 
+        unitPrice: lastRate !== null ? lastRate : (p?.price || 0), 
+        serialNumbers: [] 
+      };
+      return {...prev, items: ni};
+    });
+  }, [store.products, store.invoices]);
+
+  const handleLineProductCreate = useCallback((name: string, identifier?: string | number) => {
+    if (identifier === undefined) return;
+    setQuickProductName({name, index: identifier as number});
+  }, []);
+
+  const handleExport = (format: 'excel' | 'pdf', scope: 'page' | 'all') => {
+    const invoicesToExport = scope === 'page' ? paginatedInvoices : sortedInvoices;
+
+    if (invoicesToExport.length === 0) return alert("No invoices to export.");
+
+    const totalSub = invoicesToExport.reduce((sum, b) => sum + (b.subtotal || 0), 0);
+    const totalTotal = invoicesToExport.reduce((sum, b) => sum + (b.total || 0), 0);
+
+    const headers = ['Invoice Number', 'Customer', 'Date', 'Due Date', 'Reference', 'Subtotal', 'Total', 'Status'];
+    const rows = [
+      headers,
+      ...invoicesToExport.map(invoice => {
+        const customer = (store.contacts || []).find((c: any) => c.id === invoice.customerId)?.name || 'N/A';
+        return [
+          invoice.number,
+          customer,
+          invoice.date,
+          invoice.dueDate,
+          invoice.reference || '',
+          invoice.subtotal,
+          invoice.total,
+          invoice.status
+        ];
+      }),
+      ['TOTAL', '', '', '', '', totalSub, totalTotal, '']
+    ];
+
+    if (format === 'excel') {
+      exportToXLSX('Customer_Invoices', rows);
+    } else {
+      exportToPDF('Customer_Invoices', rows);
+    }
+  };
+
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const isSavingRef = useRef(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  const lastSavedDataRef = useRef<string>('');
+
+  useEffect(() => {
+    if (!isPosted && editingId && !isSaving) {
+      const dataToSave = {
+        ...formData,
+        items: totals.itemsWithCalc,
+        subtotal: totals.sub,
+        discountTotal: totals.disc,
+        taxTotal: totals.tax,
+        total: totals.total
+      };
+      const currentDataStr = JSON.stringify(dataToSave);
+      if (lastSavedDataRef.current === currentDataStr) return;
+
+      const timer = setTimeout(async () => {
+        if (isSavingRef && isSavingRef.current) return;
+        try {
+          setIsAutoSaving(true);
+          isSavingRef.current = true;
+          lastSavedDataRef.current = currentDataStr;
+          await store.updateInvoice(editingId, dataToSave);
+        } catch (error: any) {
+          console.error("Auto-save failed", error);
+        } finally {
+          setIsAutoSaving(false);
+          isSavingRef.current = false;
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [formData, totals, isPosted, editingId, store, isSaving]);
+
+  const filteredInvoices = store.paginatedInvoices;
+  const sortedInvoices = store.paginatedInvoices;
+  const paginatedInvoices = store.paginatedInvoices;
+  const totalPages = Math.ceil(store.invoiceCount / pageSize);
+
+  const handleLineProductSelect = useCallback((productId: string, identifier?: string | number) => {
+    if (identifier === undefined) return;
+    const idx = identifier as number;
+    setFormData(prev => {
+      const p = (store.products || []).find((x:any)=>x.id===productId);
+      const lastRate = (() => {
+        if (!productId || !prev.customerId) return null;
+        const history = (store.invoices || [])
+          .filter((b: any) => b.customerId === prev.customerId && b.status !== 'DRAFT')
+          .sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')));
+        for (const b of history) {
+          const item = (b.items || []).find((it: any) => it.productId === productId);
+          if (item) return item.unitPrice;
+        }
+        return null;
+      })();
+      
+      const ni = [...prev.items];
+      ni[idx] = { 
+        ...ni[idx], 
+        productId: productId, 
+        description: p?.name || '', 
+        unitPrice: lastRate !== null ? lastRate : (p?.price || 0), 
+        serialNumbers: [] 
+      };
+      return {...prev, items: ni};
+    });
+  }, [store.products, store.invoices]);
+
+  const handleLineProductCreate = useCallback((name: string, identifier?: string | number) => {
+    if (identifier === undefined) return;
+    setQuickProductName({name, index: identifier as number});
+  }, []);
+
+  const handleExport = (format: 'excel' | 'pdf', scope: 'page' | 'all') => {
+    const invoicesToExport = scope === 'page' ? paginatedInvoices : sortedInvoices;
+
+    if (invoicesToExport.length === 0) return alert("No invoices to export.");
+
+    const totalSub = invoicesToExport.reduce((sum, b) => sum + (b.subtotal || 0), 0);
+    const totalTotal = invoicesToExport.reduce((sum, b) => sum + (b.total || 0), 0);
+
+    const headers = ['Invoice Number', 'Customer', 'Date', 'Due Date', 'Reference', 'Subtotal', 'Total', 'Status'];
+    const rows = [
+      headers,
+      ...invoicesToExport.map(invoice => {
+        const customer = (store.contacts || []).find((c: any) => c.id === invoice.customerId)?.name || 'N/A';
+        return [
+          invoice.number,
+          customer,
+          invoice.date,
+          invoice.dueDate,
+          invoice.reference || '',
+          invoice.subtotal,
+          invoice.total,
+          invoice.status
+        ];
+      }),
+      ['TOTAL', '', '', '', '', totalSub, totalTotal, '']
+    ];
+
+    if (format === 'excel') {
+      exportToXLSX('Customer_Invoices', rows);
+    } else {
+      exportToPDF('Customer_Invoices', rows);
+    }
+  };
+
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const isSavingRef = useRef(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  const lastSavedDataRef = useRef<string>('');
+
+  useEffect(() => {
+    if (!isPosted && editingId && !isSaving) {
+      const dataToSave = {
+        ...formData,

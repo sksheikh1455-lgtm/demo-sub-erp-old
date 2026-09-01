@@ -1,0 +1,172 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL")
+}
+
+model StoreState {
+  id        String   @id @default("legacy_state")
+  data      Json
+  updatedAt DateTime @updatedAt
+}
+
+// Relational models for better queries later
+model Company {
+  id                 String    @id
+  name               String
+  code               String
+  address            String?
+  registrationNumber String?
+  taxId              String?
+  currency           String
+  industry           String
+  logoColor          String
+  accounts           Account[]
+  createdAt          DateTime  @default(now())
+}
+
+model Account {
+  id          String      @id
+  code        String
+  name        String
+  type        String
+  description String?
+  parentId    String?
+  companyId   String
+  company     Company     @relation(fields: [companyId], references: [id])
+  journalLines JournalLine[]
+}
+
+model JournalEntry {
+  id          String   @id
+  date        String
+  description String
+  reference   String?
+  status      String
+  journalType String?
+  companyId   String
+  lines       JournalLine[]
+}
+
+model JournalLine {
+  id           String       @id
+  accountId    String
+  account      Account      @relation(fields: [accountId], references: [id])
+  entry        JournalEntry @relation(fields: [entryId], references: [id])
+  entryId      String
+  contactId    String?
+  debit        Float
+  credit       Float
+  description  String?
+}
+
+model Product {
+  id                String   @id
+  externalId        String?
+  sku               String?
+  name              String
+  description       String?
+  type              String
+  price             Float
+  costPrice         Float
+  trackInventory    Boolean
+  quantityOnHand    Float    @default(0)
+  uom               String
+  trackingType      String
+  serialNumbers     String[]
+  companyIds        String[]
+  updatedAt         DateTime @updatedAt
+}
+
+// Docs Tables (Used for direct DB sync)
+model DocsProduct {
+  id         String   @id
+  company_id String?
+  name       String?
+  sku        String?
+  price      Decimal?
+  cost_price Decimal?
+  data       Json?
+  updated_at DateTime @default(now())
+
+  @@map("docs_products")
+}
+
+model DocsContact {
+  id         String   @id
+  company_id String?
+  name       String?
+  type       String?
+  data       Json?
+  updated_at DateTime @default(now())
+
+  @@map("docs_contacts")
+}
+
+model DocsJournal {
+  id               String   @id
+  company_id       String?
+  date             DateTime? @db.Date
+  journal_type     String?
+  status           String?
+  reference_number String?
+  data             Json?
+  updated_at       DateTime @default(now())
+  lines            DocsJournalLine[]
+
+  @@map("docs_journals")
+}
+
+model DocsJournalLine {
+  id          String   @id
+  journal_id  String?
+  journal     DocsJournal? @relation(fields: [journal_id], references: [id], onDelete: Cascade)
+  company_id  String?
+  account_id  String?
+  contact_id  String?
+  debit       Decimal @default(0)
+  credit      Decimal @default(0)
+  description String?
+  updated_at  DateTime @default(now())
+
+  @@map("docs_journal_lines")
+}
+
+// Import Templates
+model ImportProductTemplate {
+  id               Int      @id @default(autoincrement())
+  company_id       String?
+  name             String
+  sku              String?
+  price            Decimal @default(0)
+  cost_price       Decimal @default(0)
+  quantity_on_hand Decimal @default(0)
+  category         String? @default("General")
+  brand            String?
+  uom              String? @default("pcs")
+  description      String?
+
+  @@map("import_products_template")
+}
+
+model ImportContactTemplate {
+  id              Int      @id @default(autoincrement())
+  company_id      String?
+  name            String
+  type            String?  @default("CUSTOMER")
+  email           String?
+  phone           String?
+  address         String?
+  opening_balance Decimal @default(0)
+
+  @@map("import_contacts_template")
+}

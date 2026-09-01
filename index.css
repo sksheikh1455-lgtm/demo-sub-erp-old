@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+body { font-family: 'Inter', sans-serif; }
+.bengali { font-family: 'Hind Siliguri', sans-serif; }
+.glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(10px); }
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: #f8fafc; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+
+.print-only { display: none; }
+
+@media print {
+    aside, header, .no-print, button, .filter-bar, nav, .chatter-container, .no-print * { display: none !important; }
+    main { padding: 0 !important; margin: 0 !important; background: white !important; display: block !important; overflow: visible !important; }
+    .print-only { display: block !important; }
+    #root { height: auto !important; overflow: visible !important; display: block !important; }
+    body { background: white !important; color: black !important; padding: 0; margin: 0; overflow: visible !important; }
+    @page { size: A4 portrait; margin: 10mm; }
+    
+    /* Ensure scrollable containers are visible during print */
+    .overflow-y-auto, .overflow-hidden, .overflow-x-auto { overflow: visible !important; height: auto !important; max-height: none !important; }
+    
+    .invoice-table { width: 100%; border-collapse: collapse; border: 1.5px solid black; }
+    .invoice-table th, .invoice-table td { border: 1px solid black; padding: 4px 8px; font-size: 11px; }
+    .bill-to-box { border: 1px solid black; min-height: 80px; padding: 5px; margin-top: 10px; }
+    .info-table { border-collapse: collapse; border: 1.5px solid black; }
+    .info-table td, .info-table th { border: 1px solid black; padding: 2px 8px; font-size: 11px; text-align: center; }
+}

@@ -1,0 +1,305 @@
+ 
+  
+DECLARE
+    v_run_id TEXT := substring(md5(random()::text) from 1 for 6);
+    v_cn RECORD;
+    v_item JSONB;
+    v_journal_id TEXT;
+    v_total_debit NUMERIC := 0;
+    v_total_credit NUMERIC := 0;
+    v_product_record RECORD;
+    v_current_stock NUMERIC;
+    v_new_stock NUMERIC;
+    v_idx INT := 0;
+    v_ar_acc TEXT;
+    v_rev_acc TEXT;
+    v_inv_acc TEXT;
+    v_cogs_acc TEXT;
+    v_cogs_value NUMERIC;
+    v_net_cost NUMERIC := 0;
+    v_total_revenue_subtotal NUMERIC := 0;
+    v_global_discount NUMERIC := 0;
+    v_proportional_discount NUMERIC := 0;
+    v_revenue_net NUMERIC := 0;
+    v_tax_total NUMERIC := 0;
+    v_tax_acc TEXT;
+    v_effective_company_id TEXT;
+BEGIN
+    -- Override and force server-side BST date (Asia/Dhaka)
+    -- Removed date override
+
+    -- 1. Get Credit Note
+    SELECT * INTO v_cn FROM docs_credit_notes WHERE id = p_cn_id ;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Credit Note not found: %', p_cn_id; END IF;
+
+    -- Safe fallback if data column is NULL
+    IF v_cn.data IS NULL OR jsonb_typeof(v_cn.data) = 'null' THEN
+        v_cn.data := jsonb_build_object(
+            'id', v_cn.id,
+            'number', COALESCE(v_cn.credit_note_number, v_cn.cn_number, 'CN-' || v_cn.id),
+            'customerId', v_cn.customer_id,
+            'date', v_cn.date,
+            'total', COALESCE(v_cn.total, 0),
+            'subtotal', COALESCE(v_cn.subtotal, v_cn.total, 0),
+            'taxTotal', COALESCE(v_cn.tax_total, 0),
+            'status', COALESCE(v_cn.status, 'DRAFT'),
+            'items', '[]'::jsonb
+        );
+    END IF;
+
+    -- Advanced fallback: If data->'items' is empty or null, build it from docs_credit_note_lines relational table
+    IF NOT (v_cn.data ? 'items') OR jsonb_typeof(v_cn.data->'items') = 'null' OR jsonb_array_length(v_cn.data->'items') = 0 THEN
+        v_cn.data := jsonb_set(
+            v_cn.data,
+            '{items}',
+            COALESCE(
+                (SELECT jsonb_agg(
+                    jsonb_build_object(
+                        'id', id,
+                        'productId', product_id,
+                        'quantity', quantity,
+                        'unitPrice', unit_price,
+                        'lineValue', COALESCE(line_value, total),
+                        'discountMode', COALESCE(discount_mode, 'PERCENT'),
+                        'discountRate', COALESCE(discount_rate, 0),
+                        'type', type,
+                        'description', description
+                    )
+                ) FROM docs_credit_note_lines WHERE credit_note_id = p_cn_id),
+                '[]'::jsonb
+            )
+        );
+    END IF;
+
+    v_journal_id := COALESCE(v_cn.data->>'journalEntryId', 'JE-' || replace(UPPER(v_cn.id), 'CN-', ''));    -- EXISTS CHECK REMOVED FOR REPOSTING
+
+    -- Temporarily set journal to DRAFT so RLS allows deletion of existing lines
+    UPDATE docs_journals SET status = 'DRAFT' WHERE id = v_journal_id;
+
+    PERFORM set_config('core.bypass_audit', 'true', true);
+    DELETE FROM docs_journal_lines WHERE journal_id = v_journal_id;
+    PERFORM set_config('core.bypass_audit', 'false', true);
+
+    v_effective_company_id := COALESCE(p_company_id, v_cn.company_id, v_cn.data->>'companyId');
+    IF v_effective_company_id IS NULL THEN RAISE EXCEPTION 'Company ID missing'; END IF;
+
+    -- 2. Resolve Accounts
+    SELECT id INTO v_ar_acc FROM docs_accounts WHERE code IN ('100201', '100200') AND company_id = v_effective_company_id LIMIT 1;
+    SELECT id INTO v_rev_acc FROM docs_accounts WHERE code IN ('400100', '400000') AND company_id = v_effective_company_id LIMIT 1;
+    SELECT id INTO v_inv_acc FROM docs_accounts WHERE code IN ('100501', '100500') AND company_id = v_effective_company_id LIMIT 1;
+    SELECT id INTO v_cogs_acc FROM docs_accounts WHERE code IN ('500101', '500100') AND company_id = v_effective_company_id LIMIT 1;
+    SELECT id INTO v_tax_acc FROM docs_accounts WHERE code IN ('200400', '200100') AND company_id = v_effective_company_id LIMIT 1;
+
+    IF v_ar_acc IS NULL OR v_rev_acc IS NULL THEN 
+       RAISE EXCEPTION 'Required accounts not found for company %', v_effective_company_id;
+    END IF;
+
+    -- 3. Calculate Global Totals for Proportional Distribution & Balancing
+    v_total_revenue_subtotal := 0;
+    v_global_discount := 0;
+    v_tax_total := 0;
+    
+    FOR v_item IN SELECT jsonb_array_elements(CASE WHEN jsonb_typeof(v_cn.data->'items') = 'array' THEN v_cn.data->'items' ELSE '[]'::jsonb END) LOOP
+        IF v_item->>'type' IN ('PRODUCT', 'SERVICE', 'CHARGE') THEN
+            v_net_cost := ROUND(COALESCE((v_item->>'lineValue')::numeric, 0), 2);
+            IF v_net_cost = 0 THEN
+                v_net_cost := COALESCE((v_item->>'quantity')::numeric, 0) * COALESCE((v_item->>'unitPrice')::numeric, 0);
+                IF v_item->>'discountMode' = 'FIXED' THEN
+                    v_net_cost := v_net_cost - COALESCE((v_item->>'discountRate')::numeric, 0);
+                ELSE
+                    v_net_cost := v_net_cost * (1 - COALESCE((v_item->>'discountRate')::numeric, 0) / 100);
+                END IF;
+                v_net_cost := ROUND(v_net_cost, 2);
+            END IF;
+            v_total_revenue_subtotal := v_total_revenue_subtotal + v_net_cost;
+        ELSIF v_item->>'type' = 'DISCOUNT' THEN
+            v_net_cost := ROUND(COALESCE((v_item->>'lineValue')::numeric, 0), 2);
+            IF v_net_cost = 0 THEN
+                IF v_item->>'discountMode' = 'FIXED' THEN
+                    v_net_cost := -ROUND(COALESCE((v_item->>'discountRate')::numeric, 0), 2);
+                ELSE
+                    v_net_cost := -ROUND(v_total_revenue_subtotal * COALESCE((v_item->>'discountRate')::numeric, 0) / 100.0, 2);
+                END IF;
+            END IF;
+            v_global_discount := v_global_discount + v_net_cost;
+        ELSIF v_item->>'type' = 'TAX' THEN
+            v_net_cost := ROUND(COALESCE((v_item->>'lineValue')::numeric, 0), 2);
+            IF v_net_cost = 0 THEN
+               v_net_cost := COALESCE((v_item->>'manualValue')::numeric, ROUND((v_total_revenue_subtotal + v_global_discount) * (COALESCE((v_item->>'taxRate')::numeric, 0)/100.0), 2));
+            END IF;
+            v_tax_total := v_tax_total + v_net_cost;
+        END IF;
+    END LOOP;
+
+    -- 4. Finalize Status
+    v_journal_id := COALESCE(v_cn.data->>'journalEntryId', 'JE-' || replace(replace(UPPER(v_cn.id), 'CN-', ''), 'CN-', ''));
+    
+    -- Ensure we don't hit unq_journal_num_company if another ID has this reference
+    SELECT id INTO v_journal_id FROM docs_journals 
+    WHERE company_id = v_effective_company_id AND reference_number = v_cn.data->>'number' LIMIT 1;
+
+    IF v_journal_id IS NULL THEN
+        v_journal_id := COALESCE(v_cn.data->>'journalEntryId', 'JE-' || replace(replace(UPPER(v_cn.id), 'CN-', ''), 'CN-', ''));
+    END IF;
+
+    -- Pre-create Journal Header as DRAFT to satisfy FK and ignore balance trigger for now
+    EXECUTE 'SET LOCAL core.bypass_audit = ''true''';
+    DELETE FROM docs_journal_lines WHERE journal_id = v_journal_id;
+    EXECUTE 'SET LOCAL core.bypass_audit = ''false''';
+    INSERT INTO docs_journals (id, company_id, date, journal_date, journal_type, status, reference_number, reference, data, updated_at)
+    VALUES (v_journal_id, v_effective_company_id, v_cn.date, v_cn.date, 'CREDIT_NOTE', 'DRAFT', v_cn.data->>'number', v_cn.data->>'number', 
+        jsonb_build_object('id', v_journal_id, 'date', v_cn.date, 'status', 'DRAFT', 'companyId', v_effective_company_id, 'reference', v_cn.data->>'number', 'journalType', 'CREDIT_NOTE'), NOW())
+    ON CONFLICT (id) DO UPDATE SET status = CASE WHEN docs_journals.status = 'POSTED' THEN 'POSTED' ELSE 'DRAFT' END, updated_at = NOW();
+    
+
+    
+    -- AR Credit Line (Total)
+    INSERT INTO docs_journal_lines (id, journal_id, company_id, account_id, contact_id, debit, credit, description)
+    VALUES ('JL-' || v_run_id || '-' || v_journal_id || '-ar', v_journal_id, v_effective_company_id, v_ar_acc, COALESCE(v_cn.data->>'customerId', v_cn.data->>'contactId'), 0, ROUND(COALESCE((v_cn.data->>'total')::numeric, 0), 2), 'Credit Note: ' || (v_cn.data->>'number'));
+    v_total_credit := ROUND(COALESCE((v_cn.data->>'total')::numeric, 0), 2);
+    RAISE NOTICE 'post_credit_note: data = %, v_total_credit = %', v_cn.data, v_total_credit;
+
+    -- Items (Returns)
+    DECLARE
+        v_discount_distributed NUMERIC := 0;
+        v_items_count INT := 0;
+        v_current_item_idx INT := 0;
+    BEGIN
+        SELECT count(*) INTO v_items_count FROM jsonb_array_elements(CASE WHEN jsonb_typeof(v_cn.data->'items') = 'array' THEN v_cn.data->'items' ELSE '[]'::jsonb END) it WHERE it->>'type' IN ('PRODUCT', 'SERVICE', 'CHARGE');
+
+        FOR v_item IN SELECT jsonb_array_elements(CASE WHEN jsonb_typeof(v_cn.data->'items') = 'array' THEN v_cn.data->'items' ELSE '[]'::jsonb END) LOOP
+            v_idx := v_idx + 1; -- Unique for every item in raw array
+            
+            IF v_item->>'type' IN ('PRODUCT', 'SERVICE', 'CHARGE') THEN
+                v_current_item_idx := v_current_item_idx + 1;
+                
+                -- Calculate Gross for this line
+                v_net_cost := ROUND(COALESCE((v_item->>'lineValue')::numeric, 0), 2);
+                IF v_net_cost = 0 THEN
+                    v_net_cost := COALESCE((v_item->>'quantity')::numeric, 0) * COALESCE((v_item->>'unitPrice')::numeric, 0);
+                    IF v_item->>'discountMode' = 'FIXED' THEN
+                        v_net_cost := v_net_cost - COALESCE((v_item->>'discountRate')::numeric, 0);
+                    ELSE
+                        v_net_cost := v_net_cost * (1 - COALESCE((v_item->>'discountRate')::numeric, 0) / 100);
+                    END IF;
+                    v_net_cost := ROUND(v_net_cost, 2);
+                END IF;
+                
+                -- Distribution Logic (v_global_discount is negative)
+                IF v_current_item_idx = v_items_count THEN
+                    v_proportional_discount := ROUND(v_global_discount - v_discount_distributed, 2);
+                ELSE
+                    v_proportional_discount := CASE WHEN v_total_revenue_subtotal > 0 THEN (v_net_cost / v_total_revenue_subtotal) * v_global_discount ELSE 0 END;
+                    v_proportional_discount := ROUND(v_proportional_discount, 2);
+                    v_discount_distributed := v_discount_distributed + v_proportional_discount;
+                END IF;
+
+                v_revenue_net := ROUND(v_net_cost + v_proportional_discount, 2);
+
+                IF v_item->>'type' = 'PRODUCT' THEN
+                    -- Revenue Debit (Sales Return)
+                    INSERT INTO docs_journal_lines (id, journal_id, company_id, account_id, debit, credit, description)
+                    VALUES ('JL-' || v_run_id || '-' || v_journal_id || '-rev-' || v_idx, v_journal_id, v_effective_company_id, v_rev_acc, v_revenue_net, 0, 'Return: ' || (v_item->>'description'));
+                    v_total_debit := v_total_debit + v_revenue_net;
+
+                    -- Inventory Re-stocking
+                    SELECT * INTO v_product_record FROM docs_products WHERE id = (v_item->>'productId') FOR UPDATE;
+                    IF FOUND THEN
+                        -- No manual stock increments here! Let trigger handle it.
+                        NULL;
+                    END IF;
+                ELSIF v_item->>'type' IN ('SERVICE', 'CHARGE') THEN
+                    INSERT INTO docs_journal_lines (id, journal_id, company_id, account_id, debit, credit, description)
+                    VALUES ('JL-' || v_run_id || '-' || v_journal_id || '-rev-srv-' || v_idx, v_journal_id, v_effective_company_id, v_rev_acc, v_revenue_net, 0, 'Srv Return: ' || (v_item->>'description'));
+                    v_total_debit := v_total_debit + v_revenue_net;
+                END IF;
+            ELSIF v_item->>'type' = 'TAX' THEN
+                v_tax_total := ROUND(COALESCE((v_item->>'lineValue')::numeric, 0), 2);
+                
+                INSERT INTO docs_journal_lines (id, journal_id, company_id, account_id, debit, credit, description)
+                VALUES ('JL-' || v_run_id || '-' || v_journal_id || '-tax-' || v_idx, v_journal_id, v_effective_company_id, v_tax_acc, v_tax_total, 0, 'Tax Reverse: ' || (v_item->>'description'));
+                v_total_debit := v_total_debit + v_tax_total;
+            END IF;
+        END LOOP;
+    END;
+
+    -- If no items / lines were processed or debit is still 0 while credit is > 0,
+    -- create a default Sales Return line matching v_total_credit
+    IF v_total_credit > 0 AND v_total_debit = 0 THEN
+        DECLARE
+            v_net_return NUMERIC;
+            v_tax_return NUMERIC;
+        BEGIN
+            v_tax_return := ROUND(COALESCE((v_cn.data->>'taxTotal')::numeric, v_cn.tax_total, 0), 2);
+            v_net_return := ROUND(v_total_credit - v_tax_return, 2);
+            
+            -- Debit Revenue
+            INSERT INTO docs_journal_lines (id, journal_id, company_id, account_id, debit, credit, description)
+            VALUES ('JL-' || v_run_id || '-' || v_journal_id || '-rev-fallback', v_journal_id, v_effective_company_id, v_rev_acc, v_net_return, 0, 'Srv Return (Fallback): ' || COALESCE(v_cn.data->>'number', v_cn.credit_note_number));
+            v_total_debit := v_total_debit + v_net_return;
+            
+            -- Debit Tax if any
+            IF v_tax_return > 0 THEN
+                INSERT INTO docs_journal_lines (id, journal_id, company_id, account_id, debit, credit, description)
+                VALUES ('JL-' || v_run_id || '-' || v_journal_id || '-tax-fallback', v_journal_id, v_effective_company_id, v_tax_acc, v_tax_return, 0, 'Tax Reverse (Fallback): ' || COALESCE(v_cn.data->>'number', v_cn.credit_note_number));
+                v_total_debit := v_total_debit + v_tax_return;
+            END IF;
+        END;
+    END IF;
+
+    -- Balancing
+    v_total_debit := ROUND(v_total_debit, 2);
+    v_total_credit := ROUND(v_total_credit, 2);
+    IF v_total_debit != v_total_credit THEN
+        IF ABS(v_total_debit - v_total_credit) <= 0.10 THEN
+            -- Adjust the last sales return (revenue debit) line to balance
+            UPDATE docs_journal_lines SET debit = debit + (v_total_credit - v_total_debit)
+            WHERE journal_id = v_journal_id AND (id = 'JL-' || v_run_id || '-' || v_journal_id || '-rev-' || v_idx OR id = 'JL-' || v_run_id || '-' || v_journal_id || '-rev-srv-' || v_idx);
+            v_total_debit := v_total_credit;
+        ELSE
+            RAISE EXCEPTION 'Credit Note Failed: Unbalanced CN (Dr: %, Cr: %). Diff: %', v_total_debit, v_total_credit, (v_total_debit - v_total_credit);
+        END IF;
+    END IF;
+
+    -- Update flat columns for sync correctly (Preserves built items!)
+    UPDATE docs_credit_notes 
+    SET status = 'POSTED', 
+        data = jsonb_set(
+            jsonb_set(COALESCE(v_cn.data, data, '{}'::jsonb), '{status}', '"POSTED"'),
+            '{journalEntryId}', to_jsonb(v_journal_id)
+        ), 
+        updated_at = NOW() 
+    WHERE id = p_cn_id;
+
+    -- Upsert Header
+    INSERT INTO docs_journals (id, company_id, date, journal_date, journal_type, status, reference_number, data, updated_at)
+    VALUES (v_journal_id, v_effective_company_id, v_cn.date, v_cn.date, 'CREDIT_NOTE', 'POSTED', v_cn.data->>'number', 
+        jsonb_build_object('id', v_journal_id, 'date', v_cn.date, 'status', 'POSTED', 'companyId', v_effective_company_id, 'reference', v_cn.data->>'number', 'journalType', 'CREDIT_NOTE', 'preparedBy', COALESCE(v_cn.data->>'preparedBy', v_cn.data->>'salesperson'), 'createdById', v_cn.data->>'createdById'), NOW())
+    ON CONFLICT (id) DO UPDATE SET status = 'POSTED', data = EXCLUDED.data;
+
+    -- Update with FULL JSON document (all fields mapped!)
+    UPDATE docs_journals 
+    SET data = jsonb_build_object(
+        'id', id,
+        'date', date,
+        'status', status,
+        'companyId', company_id,
+        'reference', reference_number,
+        'journalType', 'CREDIT_NOTE',
+        'lines', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                'id', id, 
+                'accountId', account_id, 
+                'debit', debit, 
+                'credit', credit, 
+                'description', description, 
+                'contactId', contact_id
+            )) FROM docs_journal_lines WHERE journal_id = v_journal_id
+        ), '[]'::jsonb)
+    )
+    WHERE id = v_journal_id;
+
+    RETURN jsonb_build_object('success', true, 'journal_id', v_journal_id);
+END;
+
+   

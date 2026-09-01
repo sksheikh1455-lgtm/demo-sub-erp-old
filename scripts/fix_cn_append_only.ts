@@ -1,0 +1,43 @@
+import pkg from 'pg';
+const { Client } = pkg;
+const connectionString = process.env.SUPABASE_DB_URL;
+
+async function main() {
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    const res = await client.query(`
+      SELECT pg_get_functiondef(oid) as def FROM pg_proc WHERE proname = 'post_credit_note';
+    `);
+    
+    let fn = res.rows[0].def;
+    
+    // Replace the problematic DELETE line with the append-only Reversal Logic.
+    const badLine = "DELETE FROM docs_journal_lines WHERE journal_id = v_journal_id;";
+    if (fn.includes(badLine)) {
+        console.log("Replacing DELETE line...");
+        const replacement = `
+    -- Enforce Append-Only by Reversing Previous Lines if re-running
+    INSERT INTO docs_journal_lines (id, journal_id, company_id, account_id, contact_id, debit, credit, description)
+    SELECT 'REV-' || substring(md5(random()::text) from 1 for 10), journal_id, company_id, account_id, contact_id,
+           CASE WHEN sum(debit - credit) < 0 THEN abs(sum(debit - credit)) ELSE 0 END,
+           CASE WHEN sum(debit - credit) > 0 THEN sum(debit - credit) ELSE 0 END,
+           'Auto Reversal of previous total'
+    FROM docs_journal_lines 
+    WHERE journal_id = v_journal_id
+    GROUP BY journal_id, company_id, account_id, contact_id
+    HAVING ABS(sum(debit - credit)) > 0.01;
+`;
+        fn = fn.replace(badLine, replacement);
+        await client.query(fn);
+        console.log("Deployed updated append-only logic for post_credit_note!");
+    } else {
+        console.log("Bad line not found.");
+    }
+  } catch (err) {
+    console.error('Error:', err);
+  } finally {
+    await client.end();
+  }
+}
+main();

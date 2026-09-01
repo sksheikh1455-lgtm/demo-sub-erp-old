@@ -1,0 +1,63 @@
+
+    DECLARE
+      v_effective_company_id TEXT;
+      v_payment_id TEXT;
+      v_total_amount NUMERIC := 0;
+      v_alloc RECORD;
+      v_inv RECORD;
+      v_new_paid NUMERIC;
+      v_inv_paid NUMERIC;
+    BEGIN
+      v_effective_company_id := p_company_id;
+      IF NOT check_company_access(v_effective_company_id) THEN RAISE EXCEPTION $$Access denied$$; END IF;
+
+      v_payment_id := COALESCE(p_receipt_data->>$$id$$, $$PAY-$$ || gen_random_uuid());
+      v_total_amount := COALESCE((p_receipt_data->>$$amount$$)::NUMERIC, 0);
+
+      -- Insert normalized payment (using real columns!)
+      INSERT INTO docs_payments (
+        id, company_id, status, payment_number, date, contact_id, amount, payment_date, type, method, account_id, partner_account_id, reference, applied_invoices, applied_bills
+      ) VALUES (
+        v_payment_id, 
+        v_effective_company_id, 
+        $$DRAFT$$,
+        COALESCE(p_receipt_data->>$$payment_number$$, p_receipt_data->>$$number$$),
+        (p_receipt_data->>$$date$$)::DATE,
+        p_receipt_data->>$$contact_id$$,
+        v_total_amount,
+        (p_receipt_data->>$$payment_date$$)::DATE,
+        p_receipt_data->>$$type$$,
+        p_receipt_data->>$$method$$,
+        p_receipt_data->>$$account_id$$,
+        p_receipt_data->>$$partner_account_id$$,
+        p_receipt_data->>$$reference$$,
+        p_invoices,
+        $$[]$$::jsonb
+      );
+
+      -- Process allocations
+      FOR v_alloc IN SELECT * FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_invoices) = $$array$$ THEN p_invoices ELSE $$[]$$::jsonb END) LOOP
+          SELECT * INTO v_inv FROM docs_invoices WHERE id = v_alloc->>$$invoiceId$$ AND company_id = v_effective_company_id FOR UPDATE;
+          IF NOT FOUND THEN RAISE EXCEPTION $$Invoice not found: %$$, v_alloc->>$$invoiceId$$; END IF;
+          
+          SELECT COALESCE(SUM((al->>$$amount$$)::NUMERIC), 0) INTO v_inv_paid
+          FROM docs_payments p, jsonb_array_elements(CASE WHEN jsonb_typeof(p.applied_invoices) = $$array$$ THEN p.applied_invoices ELSE $$[]$$::jsonb END) al
+          WHERE p.status = $$POSTED$$ AND p.company_id = v_effective_company_id AND al->>$$invoiceId$$ = v_inv.id;
+
+          v_new_paid := v_inv_paid + (v_alloc->>$$amount$$)::NUMERIC;
+          IF v_new_paid > COALESCE(v_inv.total, 0) THEN
+              RAISE EXCEPTION $$Cannot overpay invoice %$$, v_inv.id;
+          END IF;
+
+          UPDATE docs_invoices SET 
+            status = CASE WHEN v_new_paid >= COALESCE(v_inv.total, 0) - 0.01 THEN $$PAID$$ ELSE $$PARTIAL$$ END,
+            version = COALESCE(version, 1) + 1,
+            updated_at = NOW()
+          WHERE id = v_inv.id;
+      END LOOP;
+
+      RETURN jsonb_build_object($$success$$, true, $$payment_id$$, v_payment_id);
+    EXCEPTION WHEN OTHERS THEN
+      RETURN jsonb_build_object($$success$$, false, $$error$$, SQLERRM);
+    END;
+

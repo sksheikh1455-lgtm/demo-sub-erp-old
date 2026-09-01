@@ -1,0 +1,461 @@
+  if (typeof doc.putTotalPages === 'function') {
+    doc.putTotalPages(totalPagesExp);
+  }
+
+  doc.save(`${filename}.pdf`);
+};
+
+export const renderInvoicePage = (doc: any, { invoice, customer, company, employees, items, totals, printedBy, outstandingBalance = 0 }: any) => {
+    const blue900: [number, number, number] = [30, 58, 138];
+    const slate900: [number, number, number] = [15, 23, 42];
+    const slate600: [number, number, number] = [71, 85, 105];
+    const slate400: [number, number, number] = [148, 163, 184];
+    const slate50: [number, number, number] = [248, 250, 252];
+    const slate200: [number, number, number] = [226, 232, 240];
+
+    // Company Info (Top Left)
+    doc.setTextColor(slate900[0], slate900[1], slate900[2]);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(String(company?.name || 'SUBORNO ELECTRIC').toUpperCase(), 8, 14);
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(slate600[0], slate600[1], slate600[2]);
+    doc.text(String(company?.address || 'Dhaka, Bangladesh'), 8, 19);
+
+    console.log('PDF Generation - Invoice Object:', JSON.parse(JSON.stringify(invoice)));
+    // Invoice Label (Top Right Badge)
+    const isDraft = invoice.status === 'DRAFT' || !invoice.number;
+    const invoiceLabel = isDraft ? 'DRAFT INVOICE' : 'INVOICE';
+    
+    doc.setTextColor(blue900[0], blue900[1], blue900[2]);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(invoiceLabel, doc.internal.pageSize.width - 8, 14, { align: 'right' });
+    
+    if (!isDraft) {
+      doc.setFontSize(10);
+      doc.setTextColor(slate600[0], slate600[1], slate600[2]);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`#${invoice.number}`, doc.internal.pageSize.width - 8, 19, { align: 'right' });
+      
+      if (invoice.date || invoice.createdAt || invoice.created_at || invoice.updatedAt || invoice.updated_at) {
+        doc.text(`${formatDateTime(invoice.createdAt || invoice.created_at || invoice.updatedAt || invoice.updated_at || new Date().toISOString())}`, doc.internal.pageSize.width - 8, 24, { align: 'right' });
+      }
+    }
+
+    // Divider
+    doc.setDrawColor(slate200[0], slate200[1], slate200[2]);
+    doc.setLineWidth(0.3);
+    doc.line(8, 28, doc.internal.pageSize.width - 8, 28);
+
+    // Bill To
+    doc.setFontSize(8);
+    doc.setTextColor(slate400[0], slate400[1], slate400[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.text('BILLED TO', 8, 34);
+    doc.setTextColor(slate900[0], slate900[1], slate900[2]);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(String(customer?.name || 'Cash Customer'), 8, 39);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(slate600[0], slate600[1], slate600[2]);
+    
+    let customerInfoY = 43;
+    if (customer?.address) {
+      const addressLines = doc.splitTextToSize(String(customer.address), 65);
+      doc.text(addressLines, 8, customerInfoY);
+      customerInfoY += (addressLines.length * 4.0);
+    }
+    if (customer?.phone) {
+      doc.text(String(customer.phone), 8, customerInfoY);
+      customerInfoY += 4.2;
+    }
+
+    // Right Side Info (Outstanding)
+    const rightInfoX = doc.internal.pageSize.width - 8;
+    let rightInfoY = 34;
+
+    const boxWidth = 50;
+    const boxHeight = 14;
+    const boxX = doc.internal.pageSize.width - boxWidth - 8;
+    const boxY = rightInfoY;
+
+    if (!isDraft && customer?.id && String(customer.id).startsWith('contact-cash-sale')) {
+      doc.setFillColor(240, 253, 244); // emerald-50
+      doc.setDrawColor(167, 243, 208); // emerald-200
+      doc.roundedRect(boxX, boxY, boxWidth, boxHeight, 1, 1, 'FD');
+
+      doc.setFontSize(8);
+      doc.setTextColor(4, 120, 87); // emerald-700
+      doc.setFont('helvetica', 'bold');
+      doc.text('STATUS', boxX + 4, boxY + 5);
+      
+      doc.setFontSize(12);
+      doc.text((customer?.name?.toLowerCase().includes('cash sale')) || invoice.type === 'CASH_SALE' ? 'CASH SALE / PAID' : 'PAID', rightInfoX - 4, boxY + 10.5, { align: 'right' });
+    } else {
+      doc.setFillColor(slate50[0], slate50[1], slate50[2]);
+      doc.setDrawColor(slate200[0], slate200[1], slate200[2]);
+      doc.roundedRect(boxX, boxY, boxWidth, boxHeight, 1, 1, 'FD');
+
+      doc.setFontSize(8);
+      doc.setTextColor(slate600[0], slate600[1], slate600[2]);
+      doc.setFont('helvetica', 'bold');
+      doc.text('OUTSTANDING DUE', boxX + 4, boxY + 5);
+      
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(slate900[0], slate900[1], slate900[2]);
+      doc.text(formatCurrencyPDF(outstandingBalance), rightInfoX - 4, boxY + 10.5, { align: 'right' });
+    }
+    
+    rightInfoY = boxY + boxHeight + 4;
+
+    customerInfoY = Math.max(customerInfoY, rightInfoY);
+
+    if (isDraft) {
+      try {
+        doc.saveGraphicsState();
+        const GState = (doc as any).GState || (jsPDF as any).GState;
+        if (GState) {
+          doc.setGState(new GState({ opacity: 0.04 }));
+        }
+        doc.setFontSize(70);
+        doc.setTextColor(15, 23, 42);
+        doc.setFont('helvetica', 'bold');
+        doc.text('DRAFT', doc.internal.pageSize.width / 2, doc.internal.pageSize.height / 2, {
+          align: 'center',
+          angle: 45
+        });
+        doc.restoreGraphicsState();
+      } catch (e) {
+        console.warn('GState not supported or failed:', e);
+      }
+    } else if (invoice.status === 'PAID' || invoice.type === 'CASH_SALE' || (customer?.name?.toLowerCase().includes('cash sale')) || (outstandingBalance <= 0 && invoice.status !== 'DRAFT')) {
+      // PAID Watermark
+      try {
+        doc.saveGraphicsState();
+        const GState = (doc as any).GState || (jsPDF as any).GState;
+        if (GState) {
+          doc.setGState(new GState({ opacity: 0.08 }));
+        }
+        doc.setFontSize(60);
+        doc.setTextColor(16, 185, 129); // emerald-500
+        doc.setFont('helvetica', 'bold');
+        doc.text('PAID', doc.internal.pageSize.width / 2, doc.internal.pageSize.height / 2, {
+          align: 'center',
+          angle: 30
+        });
+        doc.restoreGraphicsState();
+      } catch (e) {
+        console.warn('GState not supported or failed:', e);
+      }
+    }
+
+    const hasLineDiscounts = (items || []).some((item: any) => {
+      if (item.type !== 'PRODUCT') return false;
+      const gross = (item.unitPrice || 0) * (item.quantity || 0);
+      const net = item.lineValue !== undefined ? item.lineValue : gross;
+      const discAmt = gross - net;
+      return (item.discountRate && item.discountRate > 0) || (item.discountAmount && item.discountAmount > 0) || discAmt > 0.01;
+    });
+    
+    const tableHeaders = hasLineDiscounts ? ['Description', 'Qty', 'Rate', 'Discount', 'Net Amount'] : ['Description', 'Qty', 'Rate', 'Amount'];
+    
+    let productSeq = 0;
+    const tableData = (items || []).filter((item: any) => {
+      if (item.type === 'PRODUCT') {
+        return !!(item.productId || item.description || (item.unitPrice && item.quantity));
+      }
+      if (item.type === 'DISCOUNT') {
+        return Math.abs(item.lineValue || 0) > 0.001;
+      }
+      return true;
+    }).map((item: any) => {
+      let desc = item.displayDescription || item.description || '';
+
+      if (item.type === 'PRODUCT') {
+        productSeq++;
+        if (!/^\d+[\.\)\-]\s*/.test(desc)) {
+          desc = `${productSeq}) ${desc}`;
+        }
+
+        const rawSerials = item.serialNumbers || item.serial_numbers || item.serials;
+        let serialsArr: string[] = [];
+        if (Array.isArray(rawSerials)) {
+          serialsArr = rawSerials.map(s => String(s).trim()).filter(Boolean);
+        } else if (typeof rawSerials === 'string' && rawSerials.trim()) {
+          serialsArr = rawSerials.split(',').map(s => s.trim()).filter(Boolean);
+        }
+
+        if (serialsArr.length > 0) {
+          const formattedSerials = serialsArr.join(', ');
+          if (!desc.includes(formattedSerials)) {
+            desc += `\nS/N: ${formattedSerials}`;
+          }
+        }
+      }
+
+      if (item.type === 'PRODUCT' && item.note && item.note.trim()) {
+        const cleanNote = item.note.trim();
+        if (!desc.includes(cleanNote)) {
+          desc += `\nNote: ${cleanNote}`;
+        }
+      }
+      if (item.type === 'DISCOUNT') {
+        const rateStr = item.discountMode === 'PERCENT'
+          ? `${item.discountRate}% Percentage Discount`
+          : `${formatNumber(item.discountRate)} Flat Discount`;
+        if (!desc.includes(rateStr)) {
+          desc = `${desc} (${rateStr})`;
+        }
+      }
+
+      const row = [
+        desc,
+        item.type === 'PRODUCT' ? `${item.quantity} ${item.uom || 'Pcs'}` : '',
+        item.type === 'PRODUCT' ? formatNumber(item.unitPrice) : 
+          (item.type === 'DISCOUNT' ? (item.discountMode === 'PERCENT' ? `${item.discountRate}%` : `-${formatNumber(item.discountRate)}`) : '')
+      ];
+
+      if (hasLineDiscounts) {
+         if (item.type === 'PRODUCT') {
+            const gross = (item.unitPrice || 0) * (item.quantity || 0);
+            const net = item.lineValue !== undefined ? item.lineValue : gross;
+            const discAmt = gross - net;
+            if (discAmt > 0.01) {
+              const pct = (item.discountRate && item.discountRate > 0) 
+                ? item.discountRate 
+                : (gross > 0 ? (discAmt / gross) * 100 : 0);
+              const pctFormatted = parseFloat(pct.toFixed(2));
+              row.push(`-${formatNumber(discAmt)} (${pctFormatted}%)`);
+            } else {
+              row.push('-');
+            }
+         } else {
+            row.push('');
+         }
+      }
+
+      row.push(item.type === 'SECTION' || item.type === 'NOTE' ? '' : formatNumber(item.lineValue));
+      (row as any)._type = item.type;
+      return row;
+    });
+
+    const columnStylesConfig: any = {
+      0: { cellWidth: "auto", halign: "left" },
+      1: { halign: "center", cellWidth: 12 },
+      2: { halign: "right", cellWidth: 18 },
+    };
+
+    if (hasLineDiscounts) {
+      columnStylesConfig[3] = { halign: "right", cellWidth: 22 };
+      columnStylesConfig[4] = { halign: "right", cellWidth: 22 };
+    } else {
+      columnStylesConfig[3] = { halign: "right", cellWidth: 22 };
+    }
+
+    autoTable(doc, {
+      startY: customerInfoY + 4,
+      head: [tableHeaders],
+      body: tableData,
+      theme: 'plain',
+      headStyles: { 
+        fillColor: [255, 255, 255], 
+        textColor: slate400, 
+        fontStyle: 'bold', 
+        fontSize: 7.5, 
+        cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+        halign: 'right',
+      },
+      bodyStyles: { 
+        fontSize: 8, 
+        cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 }, 
+        textColor: slate900,
+      },
+      columnStyles: columnStylesConfig,
+      styles: { overflow: 'linebreak', font: 'helvetica' },
+      margin: { left: 8, right: 8 },
+      didParseCell: (data) => {
+        const rowData = data.row.raw as any;
+        const type = rowData._type;
+        const totalCols = hasLineDiscounts ? 5 : 4;
+        
+        if (data.section === 'head' && data.column.index === 0) {
+          data.cell.styles.halign = 'center';
+        }
+        if (type === 'SUBTOTAL' || type === 'DISCOUNT') {
+          data.cell.styles.fontStyle = 'bold';
+          if (data.column.index === 0) data.cell.styles.halign = 'right';
+          data.cell.styles.lineWidth = 0;
+          data.cell.styles.fillColor = [255, 255, 255];
+        } else if (type === 'SECTION') {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.textColor = blue900;
+          data.cell.styles.fillColor = slate50;
+          if (data.column.index === 0) {
+            data.cell.colSpan = totalCols;
+            data.cell.styles.halign = 'left';
+          }
+          data.cell.styles.overflow = 'visible';
+        } else if (type === 'NOTE') {
+          data.cell.styles.fontStyle = 'italic';
+          data.cell.styles.textColor = slate600;
+          if (data.column.index === 0) {
+            data.cell.colSpan = totalCols;
+            data.cell.styles.halign = 'left';
+          }
+        }
+      },
+      didDrawCell: (data) => {
+        const rowData = data.row.raw as any;
+        const type = rowData?._type;
+        if (type !== 'SUBTOTAL' && type !== 'DISCOUNT' && type !== 'SECTION') {
+          doc.setDrawColor(226, 232, 240); // slate200
+          doc.setLineWidth(0.1);
+          doc.line(data.cell.x, data.cell.y + data.cell.height, data.cell.x + data.cell.width, data.cell.y + data.cell.height);
+        }
+      }
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    
+    let currentY = finalY;
+    if (currentY + 20 > doc.internal.pageSize.height) {
+      doc.addPage();
+      currentY = 20;
+    }
+
+    doc.setFontSize(9);
+    const rightAlignX = doc.internal.pageSize.width - 12;
+    const labelX = doc.internal.pageSize.width - 60;
+
+    if (invoice.customerNote && invoice.customerNote.trim()) {
+      doc.setFontSize(8.5);
+      doc.setTextColor(slate600[0], slate600[1], slate600[2]);
+      doc.setFont('helvetica', 'italic');
+      const noteLines = doc.splitTextToSize(invoice.customerNote, 70);
+      doc.text(noteLines, 12, currentY);
+      currentY += (noteLines.length * 4) + 2;
+    }
+
+    doc.setDrawColor(slate200[0], slate200[1], slate200[2]);
+    doc.line(12, currentY - 4, rightAlignX, currentY - 4);
+
+    // Calculate Summary Details explicitly
+    let calculatedGross = 0;
+    let calculatedTotalDiscount = 0;
+    items.forEach((item: any) => {
+      if (item.type === 'PRODUCT') {
+        const gross = (item.unitPrice || 0) * (item.quantity || 0);
+        calculatedGross += gross;
+        calculatedTotalDiscount += (gross - (item.lineValue || 0));
+      } else if (item.type === 'DISCOUNT') {
+        calculatedTotalDiscount += Math.abs(item.lineValue || 0);
+      }
+    });
+
+    const paymentApplied = totals.total - totals.amountDue;
+    const hasDiscount = calculatedTotalDiscount > 0.01;
+    const hasPayment = paymentApplied > 0.01;
+    
+    const pageHeight = doc.internal.pageSize.height;
+    const bottomMargin = 25;
+
+    let linesNeeded = 1; // Net Amount
+    if (hasDiscount) linesNeeded += 2; // Gross + Discount
+    if (hasPayment) linesNeeded += 2; // Payment + Final Due
+    
+    const heightNeeded = linesNeeded * 6;
+    
+    // Auto-optimize space
+    const willOverflow = (currentY + heightNeeded) > (pageHeight - bottomMargin);
+    
+    if (willOverflow) {
+       doc.addPage();
+       currentY = 20;
+    }
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(slate900[0], slate900[1], slate900[2]);
+
+    {
+        // Normal Multi-line layout
+        if (hasDiscount) {
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(100, 100, 100);
+            doc.text('Gross Amount:', rightAlignX - 35, currentY, { align: 'right' });
+            doc.setTextColor(slate900[0], slate900[1], slate900[2]);
+            doc.text(formatCurrencyPDF(calculatedGross), rightAlignX, currentY, { align: 'right' });
+            currentY += 6;
+            doc.setFontSize(9);
+            doc.setTextColor(100, 100, 100);
+            doc.text('Total Discount:', rightAlignX - 35, currentY, { align: 'right' });
+            doc.setTextColor(slate900[0], slate900[1], slate900[2]);
+            doc.text(`-${formatCurrencyPDF(calculatedTotalDiscount)}`, rightAlignX, currentY, { align: 'right' });
+            currentY += 6;
+        }
+        
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(slate900[0], slate900[1], slate900[2]);
+        doc.text('Net Amount:', rightAlignX - 35, currentY, { align: 'right' });
+        doc.text(formatCurrencyPDF(totals.total), rightAlignX, currentY, { align: 'right' });
+        
+        if (hasPayment) {
+            currentY += 6;
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(100, 100, 100);
+            doc.text('Payment Applied:', rightAlignX - 35, currentY, { align: 'right' });
+            doc.setTextColor(slate900[0], slate900[1], slate900[2]);
+            doc.text(`-${formatCurrencyPDF(paymentApplied)}`, rightAlignX, currentY, { align: 'right' });
+            currentY += 6;
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(43, 61, 98);
+            doc.text('Final Due:', rightAlignX - 35, currentY, { align: 'right' });
+            doc.text(formatCurrencyPDF(totals.amountDue), rightAlignX, currentY, { align: 'right' });
+        }
+    }
+
+    // Footer
+    doc.setFontSize(7);
+    doc.setTextColor(150, 150, 150);
+    doc.setFont('helvetica', 'normal');
+    
+    let footerParts = [];
+    footerParts.push(`Created by: ${printedBy || 'System'}`);
+    const deliveryPerson = (employees || []).find((e: any) => e.id === invoice.deliveryPerson)?.name || invoice.deliveryPerson;
+    if (deliveryPerson) footerParts.push(`Delivered by: ${deliveryPerson}`);
+    const sr = (employees || []).find((e: any) => e.id === invoice.srId)?.name || invoice.srId;
+    if (sr) footerParts.push(`SR: ${sr}`);
+    
+    const footerText = footerParts.join(', ');
+    doc.text(footerText, 10, pageHeight - 8);
+};
+
+export const generateInvoicePDF = (params: any) => {
+  console.log('generateInvoicePDF: starting', { invoiceNumber: params.invoice?.number, itemsCount: params.items?.length });
+  try {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a5',
+    });
+
+    renderInvoicePage(doc, params);
+
+    const sanitize = (str: any) => (str || '').toString().replace(/[^a-z0-9]/gi, '_').substring(0, 30);
+    const filename = `Invoice_${params.invoice.number || 'Draft'}_${sanitize(params.company?.name || 'Local')}`;
+    doc.save(`${filename}.pdf`);
+  } catch (error) {
+    console.error('Error generating invoice PDF:', error);
+    alert('Failed to generate PDF. Please check the console for details.');
+  }
+};
+

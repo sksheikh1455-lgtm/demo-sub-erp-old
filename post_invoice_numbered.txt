@@ -1,0 +1,225 @@
+1: 
+2:             DECLARE
+3:                 v_invoice RECORD;
+4:                 v_journal_id TEXT;
+5:                 v_rev_acc TEXT;
+6:                 v_ar_acc TEXT;
+7:                 v_tax_acc TEXT;
+8:                 v_total_debit NUMERIC := 0;
+9:                 v_total_credit NUMERIC := 0;
+10:                 v_item JSONB;
+11:                 v_items_count INT;
+12:                 v_current_item_idx INT := 0;
+13:                 v_item_subtotal NUMERIC;
+14:                 v_global_discount NUMERIC := 0;
+15:                 v_proportional_discount NUMERIC;
+16:                 v_discount_distributed NUMERIC := 0;
+17:                 v_total_revenue_subtotal NUMERIC := 0;
+18:                 v_revenue_net NUMERIC;
+19:                 v_idx INT := 0;
+20:                 v_is_cash_sale BOOLEAN;
+21:                 v_liquidity_acc TEXT;
+22:                 v_pay_id TEXT;
+23:                 v_tax_total NUMERIC;
+24:                 v_wh_id TEXT;
+25:                 v_wac_cost NUMERIC;
+26:                 v_product_record RECORD;
+27:                 v_effective_company_id TEXT;
+28:                 v_cogs_acc TEXT;
+29:                 v_inv_acc TEXT;
+30:                 v_cogs_amount NUMERIC;
+31:             BEGIN
+32:                 PERFORM set_config('core.bypass_audit', 'true', true);
+33:                 SELECT * INTO v_invoice FROM docs_invoices WHERE id = p_invoice_id;
+34:                 IF NOT FOUND THEN
+35:                     RAISE EXCEPTION 'Invoice % not found', p_invoice_id;
+36:                 END IF;
+37: 
+38:                 v_effective_company_id := COALESCE(v_invoice.company_id, p_company_id);
+39: 
+40:                 v_journal_id := 'JE-' || UPPER(v_invoice.id);
+41:                 
+42:                 IF EXISTS(SELECT 1 FROM docs_journals WHERE id = v_journal_id AND status = 'POSTED') THEN
+43:                    RETURN jsonb_build_object('success', true, 'journal_id', v_journal_id, 'message', 'Already posted');
+44:                 END IF;
+45: 
+46:                 DELETE FROM docs_journal_lines WHERE journal_id = v_journal_id;
+47:                 DELETE FROM docs_journals WHERE id = v_journal_id;
+48: 
+49:                 INSERT INTO docs_journals (id, company_id, date, reference, description, status, created_by_id, journal_type, data)
+50:                 VALUES (v_journal_id, v_effective_company_id, v_invoice.date, COALESCE(v_invoice.invoice_number, v_invoice.id), 'Invoice ' || COALESCE(v_invoice.invoice_number, v_invoice.id), 'DRAFT', v_invoice.customer_id, 'INV', jsonb_build_object('source', 'INV', 'journalEntryId', v_journal_id));
+51: 
+52:                 
+53:                 SELECT id INTO v_ar_acc FROM docs_accounts WHERE (code IN ('1012','100200','100201','AR') OR data->>'code' IN ('1012','100200','100201','AR')) AND company_id = v_effective_company_id LIMIT 1;
+54:                 IF v_ar_acc IS NULL THEN SELECT id INTO v_ar_acc FROM docs_accounts WHERE (type = 'ASSET' OR data->>'type' = 'ASSET') AND (name ILIKE '%receivable%' OR data->>'name' ILIKE '%receivable%') AND company_id = v_effective_company_id LIMIT 1; END IF;
+55:                 IF v_ar_acc IS NULL THEN 
+56:                     v_ar_acc := 'acc-ar-' || v_effective_company_id;
+57:                     INSERT INTO docs_accounts (id, company_id, code, name, type, data) VALUES (v_ar_acc, v_effective_company_id, 'AR', 'Accounts Receivable', 'ASSET', '{"code":"AR","name":"Accounts Receivable","type":"ASSET"}') ON CONFLICT DO NOTHING;
+58:                 END IF;
+59: 
+60:                 SELECT id INTO v_rev_acc FROM docs_accounts WHERE (code IN ('4011', '4000', '400100', 'REVENUE', 'SALES') OR data->>'code' IN ('4011', '4000', '400100', 'REVENUE', 'SALES')) AND company_id = v_effective_company_id LIMIT 1;
+61:                 IF v_rev_acc IS NULL THEN SELECT id INTO v_rev_acc FROM docs_accounts WHERE (type = 'REVENUE' OR data->>'type' = 'REVENUE') AND company_id = v_effective_company_id LIMIT 1; END IF;
+62:                 IF v_rev_acc IS NULL THEN
+63:                     v_rev_acc := 'acc-rev-' || v_effective_company_id;
+64:                     INSERT INTO docs_accounts (id, company_id, code, name, type, data) VALUES (v_rev_acc, v_effective_company_id, 'REV', 'General Revenue', 'REVENUE', '{"code":"REV","name":"General Revenue","type":"REVENUE"}') ON CONFLICT DO NOTHING;
+65:                 END IF;
+66: 
+67:                 SELECT id INTO v_tax_acc FROM docs_accounts WHERE (code IN ('2011', '200100', 'TAX_PAYABLE') OR data->>'code' IN ('2011', '200100', 'TAX_PAYABLE')) AND company_id = v_effective_company_id LIMIT 1;
+68:                 IF v_tax_acc IS NULL THEN SELECT id INTO v_tax_acc FROM docs_accounts WHERE (name ILIKE '%tax%payable%' OR data->>'name' ILIKE '%tax%payable%') AND company_id = v_effective_company_id LIMIT 1; END IF;
+69:                 IF v_tax_acc IS NULL THEN SELECT id INTO v_tax_acc FROM docs_accounts WHERE (type = 'LIABILITY' OR data->>'type' = 'LIABILITY') AND company_id = v_effective_company_id LIMIT 1; END IF;
+70:                 IF v_tax_acc IS NULL THEN
+71:                     v_tax_acc := 'acc-tax-' || v_effective_company_id;
+72:                     INSERT INTO docs_accounts (id, company_id, code, name, type, data) VALUES (v_tax_acc, v_effective_company_id, 'TAX', 'Tax Payable', 'LIABILITY', '{"code":"TAX","name":"Tax Payable","type":"LIABILITY"}') ON CONFLICT DO NOTHING;
+73:                 END IF;
+74:                 SELECT id INTO v_cogs_acc FROM docs_accounts WHERE (code IN ('5011', '500100', '500101', 'COGS') OR data->>'code' IN ('5011', '500100', '500101', 'COGS')) AND company_id = v_effective_company_id LIMIT 1;
+75:                 IF v_cogs_acc IS NULL THEN SELECT id INTO v_cogs_acc FROM docs_accounts WHERE (name ILIKE '%cost of goods%' OR data->>'name' ILIKE '%cost of goods%') AND company_id = v_effective_company_id LIMIT 1; END IF;
+76:                 IF v_cogs_acc IS NULL THEN SELECT id INTO v_cogs_acc FROM docs_accounts WHERE (type = 'EXPENSE' OR data->>'type' = 'EXPENSE') AND company_id = v_effective_company_id LIMIT 1; END IF;
+77:                 IF v_cogs_acc IS NULL THEN
+78:                     v_cogs_acc := 'acc-cogs-' || v_effective_company_id;
+79:                     INSERT INTO docs_accounts (id, company_id, code, name, type, data) VALUES (v_cogs_acc, v_effective_company_id, 'COGS', 'Cost of Goods Sold', 'EXPENSE', '{"code":"COGS","name":"Cost of Goods Sold","type":"EXPENSE"}') ON CONFLICT DO NOTHING;
+80:                 END IF;
+81: 
+82:                 SELECT id INTO v_inv_acc FROM docs_accounts WHERE (code IN ('1013', '100500', '100501', 'INVENTORY') OR data->>'code' IN ('1013', '100500', '100501', 'INVENTORY')) AND company_id = v_effective_company_id LIMIT 1;
+83:                 IF v_inv_acc IS NULL THEN SELECT id INTO v_inv_acc FROM docs_accounts WHERE (name ILIKE '%inventory%' OR data->>'name' ILIKE '%inventory%') AND company_id = v_effective_company_id LIMIT 1; END IF;
+84:                 IF v_inv_acc IS NULL THEN SELECT id INTO v_inv_acc FROM docs_accounts WHERE (type = 'ASSET' OR data->>'type' = 'ASSET') AND company_id = v_effective_company_id LIMIT 1; END IF;
+85:                 IF v_inv_acc IS NULL THEN
+86:                     v_inv_acc := 'acc-inv-' || v_effective_company_id;
+87:                     INSERT INTO docs_accounts (id, company_id, code, name, type, data) VALUES (v_inv_acc, v_effective_company_id, 'INV', 'Inventory Asset', 'ASSET', '{"code":"INV","name":"Inventory Asset","type":"ASSET"}') ON CONFLICT DO NOTHING;
+88:                 END IF;
+89:   
+90: 
+91:                 -- Create AR debit line
+92:                 INSERT INTO docs_journal_lines (id, journal_id, company_id, account_id, contact_id, debit, credit, description)
+93:                 VALUES ('JL-' || v_journal_id || '-ar', v_journal_id, v_effective_company_id, 
+94:                         COALESCE(v_ar_acc, 'MISSING-AR'),
+95:                         v_invoice.customer_id, COALESCE(v_invoice.total, 0), 0, 'Accounts Receivable: ' || COALESCE(v_invoice.invoice_number, v_invoice.id));
+96: 
+97:                 
+98:                 v_total_debit := COALESCE(v_invoice.total, 0);
+99: 
+100:                 v_global_discount := COALESCE(CAST(v_invoice.data->>'discountTotal' AS NUMERIC), 0);
+101: 
+102:                 SELECT COUNT(*) INTO v_items_count FROM jsonb_array_elements(CASE WHEN jsonb_typeof(v_invoice.data->'items') = 'array' THEN v_invoice.data->'items' ELSE '[]'::jsonb END) AS i
+103:                 WHERE i->>'type' = 'PRODUCT' OR i->>'type' IS NULL;
+104: 
+105:                 FOR v_item IN SELECT * FROM jsonb_array_elements(CASE WHEN jsonb_typeof(v_invoice.data->'items') = 'array' THEN v_invoice.data->'items' ELSE '[]'::jsonb END)
+106:                 LOOP
+107:                     IF v_item->>'type' = 'PRODUCT' OR v_item->>'type' IS NULL THEN
+108:                         IF (v_item->>'quantity') IS NOT NULL AND (v_item->>'unitPrice') IS NOT NULL THEN
+109:                            v_total_revenue_subtotal := v_total_revenue_subtotal + COALESCE((v_item->>'lineValue')::numeric, (v_item->>'quantity')::numeric * (v_item->>'unitPrice')::numeric);
+110:                         ELSE
+111:                            v_total_revenue_subtotal := v_total_revenue_subtotal + COALESCE((v_item->>'lineValue')::numeric, 0);
+112:                         END IF;
+113:                     END IF;
+114:                 END LOOP;
+115: 
+116:                 BEGIN
+117:                     FOR v_item IN SELECT * FROM jsonb_array_elements(CASE WHEN jsonb_typeof(v_invoice.data->'items') = 'array' THEN v_invoice.data->'items' ELSE '[]'::jsonb END)
+118:                     LOOP
+119:                         v_idx := v_idx + 1;
+120:                         IF v_item->>'type' = 'PRODUCT' OR v_item->>'type' IS NULL THEN
+121:                             v_current_item_idx := v_current_item_idx + 1;
+122:                             
+123:                             IF (v_item->>'quantity') IS NOT NULL AND (v_item->>'unitPrice') IS NOT NULL THEN
+124:                                v_item_subtotal := COALESCE((v_item->>'lineValue')::numeric, (v_item->>'quantity')::numeric * (v_item->>'unitPrice')::numeric);
+125:                             ELSE
+126:                                v_item_subtotal := COALESCE((v_item->>'lineValue')::numeric, 0);
+127:                             END IF;
+128:                             
+129:                             IF v_current_item_idx = v_items_count THEN
+130:                                 v_proportional_discount := ROUND(v_global_discount - v_discount_distributed, 2);
+131:                             ELSE
+132:                                 v_proportional_discount := CASE WHEN v_total_revenue_subtotal > 0 THEN (v_item_subtotal / v_total_revenue_subtotal) * v_global_discount ELSE 0 END;
+133:                                 v_proportional_discount := ROUND(v_proportional_discount, 2);
+134:                                 v_discount_distributed := v_discount_distributed + v_proportional_discount;
+135:                             END IF;
+136: 
+137:                             v_revenue_net := ROUND(v_item_subtotal - v_proportional_discount, 2); 
+138: 
+139:                             INSERT INTO docs_journal_lines (id, journal_id, company_id, account_id, debit, credit, description)
+140:                             VALUES ('JL-' || v_journal_id || '-rev-' || v_idx, v_journal_id, v_effective_company_id, COALESCE(v_rev_acc, 'MISSING-REV'), 0, v_revenue_net, 'Revenue: ' || (v_item->>'description'));
+141:                             v_total_credit := v_total_credit + v_revenue_net;
+142: 
+143:                             IF v_item->>'type' = 'PRODUCT' OR v_item->>'type' IS NULL THEN
+144:                                 v_wh_id := 'wh-' || v_effective_company_id;
+145:                                 SELECT avg_cost INTO v_wac_cost FROM docs_product_costs 
+146:                                 WHERE product_id = (v_item->>'productId') AND warehouse_id = v_wh_id AND company_id = v_effective_company_id;
+147:                                 
+148:                                 IF v_wac_cost IS NULL THEN
+149:                                    SELECT cost_price INTO v_wac_cost FROM docs_products WHERE id = (v_item->>'productId');
+150:                                 END IF;
+151:                                 IF v_wac_cost IS NULL THEN v_wac_cost := 0; END IF;
+152: 
+153:                                 UPDATE docs_invoice_lines 
+154:                                  SET cost_price_at_sale = v_wac_cost
+155:                                 WHERE id = (v_item->>'id');
+156:                                 
+157:                                 SELECT * INTO v_product_record FROM docs_products WHERE id = (v_item->>'productId');
+158: 
+159:                                 
+160:       
+161:                             END IF;
+162:                         ELSIF v_item->>'type' = 'TAX' THEN
+163:                             v_tax_total := ROUND(COALESCE((v_item->>'lineValue')::numeric, COALESCE((v_item->>'taxAmount')::numeric, 0)), 2);
+164:                             IF v_tax_total = 0 THEN
+165:                                  v_tax_total := ROUND(COALESCE((v_item->>'taxTotal')::numeric, 0), 2);
+166:                             END IF;
+167:                             
+168:                             IF v_tax_total > 0 THEN
+169:                                INSERT INTO docs_journal_lines (id, journal_id, company_id, account_id, debit, credit, description)
+170:                                VALUES ('JL-' || v_journal_id || '-tax-' || v_idx, v_journal_id, v_effective_company_id, COALESCE(v_tax_acc, 'MISSING-TAX'), 0, v_tax_total, 'Tax: ' || (v_item->>'description'));
+171:                                v_total_credit := v_total_credit + v_tax_total;
+172:                             END IF;
+173:                         END IF;
+174:                     END LOOP;
+175:                 END;
+176: 
+177:                 v_total_debit := ROUND(v_total_debit, 2);
+178:                 v_total_credit := ROUND(v_total_credit, 2);
+179:                 IF v_total_debit != v_total_credit THEN
+180:                     IF EXISTS(SELECT 1 FROM docs_journal_lines WHERE journal_id = v_journal_id AND id LIKE '%-rev-%') THEN
+181:                         UPDATE docs_journal_lines 
+182:                         SET credit = ROUND(credit + (v_total_debit - v_total_credit), 2)
+183:                         WHERE id = (SELECT id FROM docs_journal_lines WHERE journal_id = v_journal_id AND id LIKE '%-rev-%' ORDER BY credit DESC LIMIT 1);
+184:                         v_total_credit := v_total_debit;
+185:                     ELSE
+186:                         RAISE EXCEPTION 'Invoice Failed: Unbalanced Invoice (Dr: %, Cr: %). Diff: %', v_total_debit, v_total_credit, (v_total_debit - v_total_credit);
+187:                     END IF;
+188:                 END IF;
+189: 
+190:                 UPDATE docs_journals SET status = 'POSTED', updated_at = NOW() WHERE id = v_journal_id;
+191: 
+192:                 -- FIX: Set invoice status to POSTED explicitly before cash sale logic evaluates
+193:                 UPDATE docs_invoices SET status = 'POSTED', journal_entry_id = v_journal_id, data = jsonb_set(jsonb_set(COALESCE(data, '{}'::jsonb), '{status}', to_jsonb('POSTED'::text)), '{journalEntryId}', to_jsonb(v_journal_id::text)) WHERE id = p_invoice_id AND status = 'DRAFT';
+194: 
+195:                 -- Cash Sale Auto Payment Logic (when first posted)
+196:                 v_is_cash_sale := COALESCE(v_invoice.customer_id, '') ILIKE '%cash-sale%' OR EXISTS(SELECT 1 FROM docs_contacts WHERE id = v_invoice.customer_id AND (name ILIKE '%cash sale%' OR name ILIKE '%cash-sale%'));
+197:                 IF v_is_cash_sale AND NOT EXISTS (
+198:                     SELECT 1 FROM docs_payments p, jsonb_array_elements(CASE WHEN jsonb_typeof(p.data->'appliedInvoices') = 'array' THEN p.data->'appliedInvoices' ELSE '[]'::jsonb END) AS app
+199:                     WHERE p.id <> 'PAY-AUTO-' || p_invoice_id AND p.status = 'POSTED' AND app->>'invoiceId' = p_invoice_id
+200:                 ) THEN
+201:                     SELECT id INTO v_liquidity_acc FROM docs_accounts WHERE code IN ('1011', '100100', '100101', 'CASH', 'BANK') AND company_id = v_effective_company_id LIMIT 1;
+202:                     IF v_liquidity_acc IS NULL THEN SELECT id INTO v_liquidity_acc FROM docs_accounts WHERE (name ILIKE '%cash%' OR name ILIKE '%bank%') AND company_id = v_effective_company_id LIMIT 1; END IF;
+203:                     IF v_liquidity_acc IS NULL THEN SELECT id INTO v_liquidity_acc FROM docs_accounts WHERE type = 'ASSET' AND company_id = v_effective_company_id LIMIT 1; END IF;
+204:                     
+205:                     v_pay_id := 'PAY-AUTO-' || p_invoice_id;
+206:                     INSERT INTO docs_payments (id, company_id, date, contact_id, status, type, amount, payment_date, applied_invoices, data, updated_at)
+207:                     VALUES (
+208:                         v_pay_id, v_effective_company_id, v_invoice.date, v_invoice.customer_id, 'DRAFT', 'RECEIPT', COALESCE(v_invoice.total, 0), v_invoice.date, jsonb_build_array(jsonb_build_object('invoiceId', p_invoice_id, 'invoiceNumber', COALESCE(v_invoice.invoice_number, '(DRAFT)'), 'amount', COALESCE(v_invoice.total, 0), 'remaining', 0)),
+209:                         jsonb_build_object(
+210:                             'id', v_pay_id, 'amount', COALESCE(v_invoice.total, 0),
+211:                             'contactId', v_invoice.customer_id, 'date', v_invoice.date, 'method', 'CASH', 'type', 'RECEIPT',
+212:                             'accountId', v_liquidity_acc, 'status', 'DRAFT', 'companyId', v_effective_company_id,
+213:                             'appliedInvoices', jsonb_build_array(jsonb_build_object('invoiceId', p_invoice_id, 'invoiceNumber', COALESCE(v_invoice.invoice_number, '(DRAFT)'), 'amount', COALESCE(v_invoice.total, 0), 'remaining', 0))
+214:                         ),
+215:                         NOW()
+216:                     ) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, applied_invoices = EXCLUDED.applied_invoices, date = EXCLUDED.date, payment_date = EXCLUDED.payment_date, amount = EXCLUDED.amount, type = EXCLUDED.type, updated_at = NOW();
+217:                     
+218:                     PERFORM post_payment(v_pay_id, v_effective_company_id);
+219:                     
+220:                     UPDATE docs_invoices SET status = 'PAID', data = jsonb_set(COALESCE(data, '{}'::jsonb), '{status}', to_jsonb('PAID'::text)) WHERE id = p_invoice_id;
+221:                 END IF;
+222: 
+223:                 RETURN jsonb_build_object('success', true, 'journal_id', v_journal_id);
+224:             END;
+225: 

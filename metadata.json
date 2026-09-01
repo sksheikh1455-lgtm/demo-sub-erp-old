@@ -1,0 +1,5 @@
+{
+  "name": "Sub ERP",
+  "description": "A GAAP/IFRS compliant double-entry accounting system featuring an immutable ledger, hierarchical Chart of Accounts, smart invoice management, AI-powered financial mapping, and advanced multi-user team security with email-based invitations and password recovery.",
+  "requestFramePermissions": ["camera", "geolocation", "microphone"]
+}

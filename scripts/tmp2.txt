@@ -1,0 +1,32 @@
+
+BEGIN
+    RETURN QUERY
+    SELECT 
+        j.date,
+        COALESCE(
+          CASE 
+            WHEN j.journal_type = 'INV' THEN (SELECT inv.invoice_number FROM docs_invoices inv WHERE LOWER(replace(LOWER(j.id), 'je-', '')) = LOWER(inv.id) OR LOWER(j.reference_number) = LOWER(inv.invoice_number) LIMIT 1)
+            WHEN j.journal_type = 'BILL' THEN (SELECT b.bill_number FROM docs_bills b WHERE LOWER(replace(LOWER(j.id), 'je-', '')) = LOWER(b.id) OR LOWER(j.reference_number) = LOWER(b.bill_number) LIMIT 1)
+            WHEN j.journal_type IN ('CUST_PAY', 'VEND_PAY') THEN (SELECT pay.payment_number FROM docs_payments pay WHERE LOWER(replace(LOWER(pay.id), 'pay-', '')) = LOWER(replace(replace(replace(replace(LOWER(j.id), 'je-cpay-', ''), 'je-vpay-', ''), 'je-', ''), 'pay-', '')) OR LOWER(j.reference_number) LIKE '%' || LOWER(pay.payment_number) || '%' LIMIT 1)
+            WHEN j.journal_type = 'CREDIT_NOTE' THEN (SELECT cn.credit_note_number FROM docs_credit_notes cn WHERE LOWER(replace(LOWER(j.id), 'je-', '')) = LOWER(cn.id) OR LOWER(j.reference_number) = LOWER(cn.credit_note_number) LIMIT 1)
+            ELSE NULL
+          END,
+          j.reference_number,
+          ''
+        ) AS reference,
+        COALESCE(al.description, ''),
+        COALESCE(c.name, 'Unknown'),
+        COALESCE(al.debit, 0),
+        COALESCE(al.credit, 0),
+        SUM(al.debit - al.credit) OVER (ORDER BY j.date, COALESCE(j.created_at, j.updated_at), j.id, al.created_at, al.id) as running_balance
+    FROM docs_journal_lines al
+    JOIN docs_journals j ON al.journal_id = j.id
+    LEFT JOIN docs_companies c ON j.company_id = c.id
+    WHERE (p_company_id IS NULL OR j.company_id = p_company_id)
+      AND al.account_id = p_account_id
+      AND j.status = 'POSTED'
+      AND j.date >= p_start_date 
+      AND j.date <= p_end_date
+    ORDER BY j.date ASC, COALESCE(j.created_at, j.updated_at) ASC, j.id ASC, al.created_at ASC, al.id ASC;
+END;
+
