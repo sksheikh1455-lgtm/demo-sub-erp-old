@@ -1639,10 +1639,11 @@ export const useAccountingStore = () => {
           try { await supabase.from('docs_companies').upsert({ id: 'comp-1', name: 'Default Company', code: 'DEF' }, { onConflict: 'id', ignoreDuplicates: true }); } catch(e) {}
           
           try { await supabase.from('docs_user_company_access').upsert({
+            id: `acc-${session.user.id}-comp-1`,
             user_uuid: session.user.id,
             company_id: 'comp-1',
-            role_id: 'role-admin'
-          }); } catch(e) {}
+            role: 'role-admin'
+          }, { onConflict: 'id' }); } catch(e) {}
         }
 
         if (sessionError) {
@@ -1694,11 +1695,13 @@ export const useAccountingStore = () => {
 
             if (userProfile?.companyIds && userProfile.companyIds.length > 0) {
               const accessPayload = userProfile.companyIds.map(cid => ({
+                id: `acc-${session.user.id}-${cid}`,
                 user_uuid: session.user.id,
+                user_id: userProfile.id,
                 company_id: cid,
-                role_id: userProfile.roleId || 'role-admin'
+                role: userProfile.roleId || 'role-admin'
               }));
-              supabase.from('docs_user_company_access').upsert(accessPayload).then(({error}) => { if(error) console.error(error); });
+              supabase.from('docs_user_company_access').upsert(accessPayload, { onConflict: 'id' }).then(({error}) => { if(error) console.error(error); });
             }
             
             // Removed data column update since column does not exist
