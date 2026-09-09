@@ -125,11 +125,16 @@ console.log("PROXYING TO", targetUrl);
   });
 
   app.use(express.json());
+
+  // Healthcheck endpoint for Cloud Run and ingress reverse proxy
+  app.get(["/health", "/api/health"], (req, res) => {
+    res.status(200).json({ status: "ok", time: new Date().toISOString() });
+  });
   
   // SECURE ALL /api ROUTES WITH JWT MIDDLEWARE
-  // Exclude /api/execute-sql from auth middleware for local admin
+  // Exclude /api/execute-sql and health checks from auth middleware
   app.use("/api", (req, res, next) => {
-    if (req.path === '/execute-sql') return next();
+    if (req.path === '/execute-sql' || req.path === '/health') return next();
     authMiddleware(req, res, next);
   });
   

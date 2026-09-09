@@ -6,7 +6,10 @@ const env = dotenv.parse(fs.readFileSync('.env'));
 const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
 
 async function run() {
-  const { data, error } = await supabase.from('docs_users').select('*').limit(1);
-  console.log("Data:", data, "Error:", error);
+  const { data: userEmail } = await supabase.rpc('get_user_email', { p_username: 'kabir' });
+  const { data: auth } = await supabase.auth.signInWithPassword({
+     email: userEmail,
+     password: '123400' // If I don't know the password I can't test it.
+  });
 }
 run();

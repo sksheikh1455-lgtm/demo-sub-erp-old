@@ -40,14 +40,10 @@ const getSupabaseKey = () => {
 let rawUrl = getSupabaseUrl() || '';
 let rawKey = getSupabaseKey() || '';
 
-if (!rawUrl) {
-  console.warn('VITE_SUPABASE_URL is not set in the environment variables.');
-  rawUrl = '';
+if (!rawUrl || rawUrl.includes('buspgzsamhfmjrmmwpmo') || rawUrl.includes('hcsqqkrqfaiyduvbulox')) {
+  rawUrl = 'https://fachqxrknmrgekfcldgw.supabase.co';
 }
 let supabaseUrl = rawUrl;
-if (supabaseUrl && supabaseUrl.includes('hcsqqkrqfaiyduvbulox')) {
-  supabaseUrl = 'https://buspgzsamhfmjrmmwpmo.supabase.co';
-}
 
 if (supabaseUrl && !supabaseUrl.startsWith('http') && !supabaseUrl.includes('.')) {
   supabaseUrl = `https://${supabaseUrl}.supabase.co`;
@@ -55,9 +51,8 @@ if (supabaseUrl && !supabaseUrl.startsWith('http') && !supabaseUrl.includes('.')
   supabaseUrl = `https://${supabaseUrl}`;
 }
 
-if (!rawKey) {
-  console.warn('VITE_SUPABASE_ANON_KEY is not set in the environment variables.');
-  rawKey = '';
+if (!rawKey || rawKey.includes('8Pj-NoDqlenxJr2azDs5L-gCfPJ-Bvcdzalq5UqKcRM')) {
+  rawKey = 'sb_publishable_Vn4nDHSZHygpGv9hpuZXmQ_qY04jVBu';
 }
 const supabaseKey = rawKey;
 
@@ -245,7 +240,7 @@ function mapPayload(table: string, item: any) {
   // Whitelist filtering to guarantee DB schema safety
   const allowedColumns = TABLE_COLUMNS[table];
   if (allowedColumns) {
-    const hasDataCol = ['docs_commission_targets', 'docs_leaves', 'docs_tasks', 'docs_holidays', 'docs_brands', 'docs_advance_salaries', 'docs_accounts', 'docs_contacts', 'docs_bills', 'docs_journals', 'docs_payments', 'docs_inventory_adjustments', 'docs_payslips', 'docs_categories', 'docs_credit_notes', 'docs_invoices', 'docs_products', 'docs_loans', 'docs_users'].includes(table);
+    const hasDataCol = ['docs_commission_targets', 'docs_leaves', 'docs_tasks', 'docs_holidays', 'docs_brands', 'docs_advance_salaries', 'docs_accounts', 'docs_contacts', 'docs_bills', 'docs_journals', 'docs_payments', 'docs_inventory_adjustments', 'docs_payslips', 'docs_categories', 'docs_credit_notes', 'docs_invoices', 'docs_products', 'docs_loans'].includes(table);
     const columnsWithData = hasDataCol ? (allowedColumns.includes('data') ? allowedColumns : [...allowedColumns, 'data']) : allowedColumns.filter(c => c !== 'data');
     const filtered: any = {};
     const nonTextCols = [

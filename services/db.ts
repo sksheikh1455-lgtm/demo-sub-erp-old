@@ -23,12 +23,13 @@ export function mapDatabaseRowToFrontend(row: any) {
   if (!row) return row;
   const { company_id, ...rest } = row;
   
-  const mappedNumber = rest.invoice_number || rest.bill_number || rest.payment_number || 
+  const mappedNumber = rest.invoice_number || rest.bill_number || rest.payment_number ||
                        rest.credit_note_number || rest.cn_number || rest.loan_number;
 
+  const cleanRest = Object.fromEntries(Object.entries(rest).filter(([_, v]) => v !== null && v !== undefined && v !== ""));
   return {
     ...(rest.data || {}),
-    ...rest,
+    ...cleanRest,
     id: row.id,
     companyId: company_id || row.companyId,
     customerId: rest.customer_id || rest.customerId || null,
@@ -237,8 +238,14 @@ export const dbService = {
               const allowed = TABLE_COLUMNS[table] || [];
               const orClauses: string[] = [];
               if (allowed.includes('id') && idx === 0 && terms.length === 1) orClauses.push(`id.eq."${sEscaped.replace(/"/g, '""')}"`);
-              if (allowed.includes('name')) orClauses.push(`name.ilike.${tMatch}`);
-              if (allowed.includes('sku')) orClauses.push(`sku.ilike.${tMatch}`);
+              if (allowed.includes('name')) {
+                orClauses.push(`name.ilike.${tMatch}`);
+                orClauses.push(`data->>name.ilike.${tMatch}`);
+              }
+              if (allowed.includes('sku')) {
+                orClauses.push(`sku.ilike.${tMatch}`);
+                orClauses.push(`data->>sku.ilike.${tMatch}`);
+              }
               if (allowed.includes('invoice_number')) orClauses.push(`invoice_number.ilike.${tMatch}`);
               if (allowed.includes('bill_number')) orClauses.push(`bill_number.ilike.${tMatch}`);
               if (allowed.includes('payment_number')) orClauses.push(`payment_number.ilike.${tMatch}`);
@@ -410,8 +417,8 @@ export const dbService = {
         p_contact_type: 'CUSTOMER'
       });
       if (!custError && customerData) {
-        customerData.forEach((row: any) => {
-           balances[row.contact_id] = Number(row.balance) || 0;
+        customerData.forEach((row: any) => { 
+          balances[row.contact_id] = Number(row.balance) || 0;
         });
       }
 
@@ -420,8 +427,8 @@ export const dbService = {
         p_contact_type: 'VENDOR'
       });
       if (!vendError && vendorData) {
-        vendorData.forEach((row: any) => {
-           balances[row.contact_id] = Number(row.balance) || 0;
+        vendorData.forEach((row: any) => { 
+          balances[row.contact_id] = Number(row.balance) || 0;
         });
       }
       

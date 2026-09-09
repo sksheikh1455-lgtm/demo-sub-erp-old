@@ -1467,6 +1467,33 @@ export const useAccountingStore = () => {
           comp1.name = 'SUBORNO ELECTRIC';
           comp1.code = 'SUL';
         }
+
+
+
+        const userStateLocal = useAccountingStoreBase.getState();
+        const currentUserLocal = userStateLocal.currentUser;
+        if (currentUserLocal && currentUserLocal.companyIds) {
+           currentUserLocal.companyIds.forEach(cid => {
+              if (!loadedCompanies.find(c => c.id === cid)) {
+                 loadedCompanies.push({
+                    id: cid,
+                    name: cid === 'comp-1' ? 'SUBORNO ELECTRIC' : cid === 'comp-1740059535071' ? 'SUBORNO NEW' : 'Company ' + cid.substring(0, 4),
+                    address: "Synced via local access",
+                    phone: "",
+                    email: "",
+                    currency: "BDT",
+                    fiscalYearStart: "Jan"
+                 });
+              }
+           });
+        }
+        if ((currentUserLocal as any)?.data?.allowedCompanies) {
+           (currentUserLocal as any).data.allowedCompanies.forEach((ac: any) => {
+              const existingIdx = loadedCompanies.findIndex(c => c.id === ac.id);
+              if (existingIdx >= 0) loadedCompanies[existingIdx] = ac;
+              else loadedCompanies.push(ac);
+           });
+        }
         setLocalOnlyCompanies(loadedCompanies);
       }
       const r8 = unwrap(results[8]); if(r8 !== undefined) setLocalOnlyUsers(r8);
@@ -1642,11 +1669,12 @@ export const useAccountingStore = () => {
             .from('docs_users')
             .select('*')
             .eq('user_uuid', session.user.id)
-            .single();
+            .limit(1);
           (profileQuery as any).catch(() => {});
           const pTimeout = new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Profile timeout')), 3000));
           pTimeout.catch(() => {});
-          const { data: profileData, error: profileError } = await Promise.race([profileQuery, pTimeout]);
+          const { data: profileRows, error: profileError } = await Promise.race([profileQuery, pTimeout]);
+          const profileData = profileRows?.[0];
 
           if (!profileError && profileData) {
             const userProfile = {
@@ -1673,17 +1701,7 @@ export const useAccountingStore = () => {
               supabase.from('docs_user_company_access').upsert(accessPayload).then(({error}) => { if(error) console.error(error); });
             }
             
-            // CRITICAL: Ensure data JSON column is populated to bypass RLS failure in check_company_access
-            if (!profileData.data || !profileData.data.companyIds) {
-               await supabase.from('docs_users').update({
-                 data: {
-                   ...(profileData.data || {}),
-                   companyId: profileData.company_id || 'comp-1',
-                   companyIds: profileData.company_ids || ['comp-1'],
-                   roleId: profileData.role_id || 'role-admin'
-                 }
-               }).eq('id', profileData.id);
-            }
+            // Removed data column update since column does not exist
           }
         }
       } catch (authErr) {
@@ -2651,11 +2669,7 @@ export const useAccountingStore = () => {
                const currentIds = profile.data?.companyIds || profile.company_ids || [];
                const newIds = Array.from(new Set([...currentIds, newId]));
                await supabase.from('docs_users').update({
-                 company_ids: newIds,
-                 data: {
-                   ...(profile.data || {}),
-                   companyIds: newIds
-                 }
+                 company_ids: newIds
                }).eq('id', profile.id);
              }
           }
@@ -5679,8 +5693,71 @@ const addExpense = useCallback(async (expenseData: any) => {
   const updatePayment = useCallback(async (...args: any[]) => { console.warn('Stubbed method updatePayment called'); return {} as any; }, []);
   const updateAccount = useCallback(async (...args: any[]) => { console.warn('Stubbed method updateAccount called'); return {} as any; }, []);
   const targetMode = useCallback(async (...args: any[]) => { console.warn('Stubbed method targetMode called'); return {} as any; }, []);
-  const updateUser = useCallback(async (...args: any[]) => { console.warn('Stubbed method updateUser called'); return {} as any; }, []);
-  const inviteUser = useCallback(async (...args: any[]) => { console.warn('Stubbed method inviteUser called'); return {} as any; }, []);
+      const updateUser = useCallback(async (id: string, updates: any) => {
+    try {
+      const existingUser = users.find(u => u.id === id) || ({} as any);
+      const merged = { ...existingUser, ...updates };
+      const payload = {
+        name: merged.name,
+        username: merged.username,
+        email: merged.email,
+        pin: merged.pin,
+        role_id: merged.roleId,
+        company_ids: merged.companyIds,
+        company_id: merged.companyIds?.[0] || 'comp-1',
+        data: merged
+      };
+      await dbService.upsertDoc('docs_users', id, payload);
+      
+      // Attempt to sync docs_user_company_access
+      try {
+         const { data: userData } = await supabase.from('docs_users').select('user_uuid').eq('id', id).maybeSingle();
+         if (userData?.user_uuid) {
+             const accessPayload = (updates.companyIds || []).map((cid: string) => ({
+                 user_uuid: userData.user_uuid,
+                 company_id: cid,
+                 role_id: updates.roleId || 'role-accountant'
+             }));
+             await supabase.from('docs_user_company_access').delete().eq('user_uuid', userData.user_uuid);
+             if (accessPayload.length > 0) {
+                 await supabase.from('docs_user_company_access').upsert(accessPayload);
+             }
+         }
+      } catch(e) {
+         console.warn("Could not sync user company access, relies on next login:", e);
+      }
+
+      setLocalOnlyUsers((prev: any[]) => prev.map(u => u.id === id ? { ...u, ...updates } : u));
+      return { id, ...updates };
+    } catch(err) {
+      console.error(err);
+      throw err;
+    }
+  }, [setLocalOnlyUsers]);
+    const inviteUser = useCallback(async (userData: any) => {
+    try {
+      const id = 'user-' + Date.now();
+      const payload = {
+        id,
+        name: userData.name,
+        username: userData.username,
+        email: userData.email,
+        pin: userData.pin || '1234',
+        role_id: userData.roleId,
+        company_ids: userData.companyIds,
+        company_id: userData.companyIds?.[0] || 'comp-1',
+        status: 'ACTIVE',
+        data: userData
+      };
+      await dbService.upsertDoc('docs_users', id, payload);
+      const newUser = { id, ...userData };
+      setLocalOnlyUsers((prev: any[]) => [newUser, ...prev]);
+      return newUser;
+    } catch(err) {
+      console.error(err);
+      throw err;
+    }
+  }, [setLocalOnlyUsers]);
   const addTask = useCallback(async (...args: any[]) => { console.warn('Stubbed method addTask called'); return {} as any; }, []);
   const updateTask = useCallback(async (...args: any[]) => { console.warn('Stubbed method updateTask called'); return {} as any; }, []);
   const deleteTask = useCallback(async (...args: any[]) => {

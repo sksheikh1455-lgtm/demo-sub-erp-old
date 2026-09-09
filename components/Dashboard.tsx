@@ -139,7 +139,7 @@ const Dashboard: React.FC<{ store: any }> = ({ store }) => {
                 const user = store.currentUser;
                 if (user) {
                    const uCompIds = Array.from(new Set([...(user.companyIds || []), targetComp.id, sourceComp.id]));
-                   await supabase.from('docs_users').update({ company_ids: uCompIds, data: { ...user, companyIds: uCompIds } }).eq('id', user.id);
+                   await supabase.from('docs_users').update({ company_ids: uCompIds }).eq('id', user.id);
                 }
 
                 // 2. Fetch all products of source company

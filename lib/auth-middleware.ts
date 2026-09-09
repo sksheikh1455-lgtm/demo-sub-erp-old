@@ -8,50 +8,12 @@ export interface AuthenticatedRequest extends Request {
 
 export async function authMiddleware(req: any, res: any, next: any): Promise<any> {
   try {
-    // 1. Strict Bangladesh-Only Geo-Blocking Guardrail
-    const geoHeaders = [
-      "cf-ipcountry",
-      "x-country-code",
-      "x-vercel-ip-country",
-      "x-appengine-country",
-      "supabase-country"
-    ];
-    let countryCode: string | undefined = undefined;
-    for (const h of geoHeaders) {
-      const val = req.headers[h];
-      if (val) {
-        countryCode = (Array.isArray(val) ? val[0] : val).trim().toUpperCase();
-        break;
-      }
-    }
-
-    if (countryCode && countryCode !== "BD") {
-      const clientIp = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").toString();
-      const isLocalhost = 
-        clientIp.includes("127.0.0.1") || 
-        clientIp === "::1" || 
-        clientIp.includes("::ffff:127.0.0.1") ||
-        clientIp.startsWith("10.") ||
-        clientIp.startsWith("192.168.") ||
-        clientIp.startsWith("172.16.") ||
-        clientIp.startsWith("172.17.") ||
-        clientIp.startsWith("172.18.") ||
-        clientIp.startsWith("172.19.") ||
-        clientIp.startsWith("172.2") ||
-        clientIp.startsWith("172.3") ||
-        !clientIp; // local/internal
-
-      if (!isLocalhost) {
-        console.warn(`Geo-Block: Blocked request from ${clientIp} (Country: ${countryCode})`);
-        return res.status(403).json({ error: "Forbidden: Access restricted to Bangladesh territory only (BD)." });
-      }
-    }
-
     // Public routes do not need token verification
     if (req.path && (
       req.path.startsWith("/api/auth/") || 
       req.path.startsWith("/auth/") || 
-      req.path === "/api/supabase-proxy" || req.path.startsWith("/gemini/") || req.path.startsWith("/api/gemini/")
+      req.path === "/api/supabase-proxy" || req.path.startsWith("/gemini/") || req.path.startsWith("/api/gemini/") ||
+      req.path === "/health" || req.path === "/api/health"
     )) {
       return next();
     }

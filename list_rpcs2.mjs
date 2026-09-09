@@ -6,7 +6,7 @@ const env = dotenv.parse(fs.readFileSync('.env'));
 const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
 
 async function run() {
-  const { data, error } = await supabase.from('docs_users').select('*').limit(1);
-  console.log("Data:", data, "Error:", error);
+  const { data, error } = await supabase.from('pg_proc').select('proname');
+  console.log("pg_proc:", data?.length ? data.length : error?.message);
 }
 run();
