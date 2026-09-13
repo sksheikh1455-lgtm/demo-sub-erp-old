@@ -7,8 +7,11 @@ const envFile = dotenv.config().parsed || {};
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
-    const supabaseUrl = envFile.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-    const supabaseKey = envFile.VITE_SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+    const defaultSupabaseUrl = 'https://fachqxrknmrgekfcldgw.supabase.co';
+    const defaultSupabaseKey = 'sb_publishable_Vn4nDHSZHygpGv9hpuZXmQ_qY04jVBu';
+
+    const supabaseUrl = envFile.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL || defaultSupabaseUrl;
+    const supabaseKey = envFile.VITE_SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || defaultSupabaseKey;
     
     return {
       base: '/',

@@ -1,4 +1,9 @@
 
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './index.css';
+
 const originalError = console.error;
 console.error = (...args) => {
   if (args.some(arg => typeof arg === 'string' && arg.includes('Refresh Token Not Found'))) {
@@ -15,11 +20,6 @@ window.addEventListener('unhandledrejection', (event) => {
     event.preventDefault();
   }
 });
-
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-import './index.css';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

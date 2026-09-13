@@ -1946,9 +1946,6 @@ export const useAccountingStore = () => {
                   } else {
                     
               console.error(`[Store] Failed to load ${tables[i]} (companyIds: ${activeCids}):`, res.reason);
-              if (tables[i] === 'invoices') {
-                fetch('http://localhost:3002', { method: 'POST', body: res.reason?.stack || res.reason?.toString() || 'unknown' }).catch(e=>console.error(e));
-              }
 
                   }
                 }
