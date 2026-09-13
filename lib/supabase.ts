@@ -40,6 +40,8 @@ const getSupabaseKey = () => {
 let rawUrl = getSupabaseUrl() || '';
 let rawKey = getSupabaseKey() || '';
 
+const FACH_ANON_KEY = 'sb_publishable_Vn4nDHSZHygpGv9hpuZXmQ_qY04jVBu';
+
 if (!rawUrl || rawUrl.includes('buspgzsamhfmjrmmwpmo') || rawUrl.includes('hcsqqkrqfaiyduvbulox')) {
   rawUrl = 'https://fachqxrknmrgekfcldgw.supabase.co';
 }
@@ -51,8 +53,15 @@ if (supabaseUrl && !supabaseUrl.startsWith('http') && !supabaseUrl.includes('.')
   supabaseUrl = `https://${supabaseUrl}`;
 }
 
-if (!rawKey || rawKey.includes('8Pj-NoDqlenxJr2azDs5L-gCfPJ-Bvcdzalq5UqKcRM')) {
-  rawKey = 'sb_publishable_Vn4nDHSZHygpGv9hpuZXmQ_qY04jVBu';
+if (!rawKey || 
+    rawKey.includes('8Pj-NoDqlenxJr2azDs5L-gCfPJ-Bvcdzalq5UqKcRM') || 
+    rawKey.includes('hcsqqkrqfaiyduvbulox') || 
+    rawKey.includes('QrWJU7') || 
+    rawKey.includes('buspgzsamhfmjrmmwpmo') || 
+    rawKey.includes('Ic2uUZSJ') ||
+    (supabaseUrl.includes('fachqxrknmrgekfcldgw') && !rawKey.startsWith('sb_publishable_Vn4nDHSZHygpGv9hpuZXmQ_qY04jVBu'))
+) {
+  rawKey = FACH_ANON_KEY;
 }
 const supabaseKey = rawKey;
 
